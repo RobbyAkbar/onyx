@@ -58,7 +58,7 @@ Any files uploaded to the chat will be automatically be available in the executi
 The current directory in the file system can be used to save and persist user files. Files written to the current directory will be returned with a `file_link`. \
 Use this to give the user a way to download the file OR to display generated images.
 Internet access for this session is disabled. Do not make external web requests or API calls as they will fail.
-Use `openpyxl` to read and write Excel files. You have access to libraries like numpy, pandas, scipy, matplotlib, and PIL.
+Use `openpyxl` to read and write Excel files. You have access to libraries like numpy, pandas, scipy, matplotlib, PIL, and reportlab (for PDF generation).
 IMPORTANT: each call to this tool runs in a fresh, stateless sandbox. Variables, imports, and in-memory state from previous calls will NOT be available, \
 and files written by a previous call will NOT be available in later calls. \
 Therefore batch multi-step work into a single script per call: e.g. load a workbook once, read all needed sheets, apply all edits, and save the result in one execution — not one small step per call.

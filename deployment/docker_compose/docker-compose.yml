@@ -116,6 +116,7 @@ services:
       - api_server_logs:/var/log/onyx
       # Shared volume for persistent document storage (Craft file-system mode)
       - file-system:/app/file-system
+      - sandbox-data:/tmp/onyx-sandboxes
 
   background:
     image: ${ONYX_BACKEND_IMAGE:-onyxdotapp/onyx-backend:${IMAGE_TAG:-latest}}
@@ -517,13 +518,28 @@ services:
       timeout: 20s
       retries: 3
 
+  python-executor:
+    image: onyxdotapp/python-executor-sci-custom
+    build:
+      context: .
+      dockerfile: Dockerfile.python-executor
+
   code-interpreter:
     image: onyxdotapp/code-interpreter:${CODE_INTERPRETER_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.code-interpreter
+      args:
+        - CODE_INTERPRETER_IMAGE_TAG=${CODE_INTERPRETER_IMAGE_TAG:-latest}
     command: ["bash", "./entrypoint.sh", "code-interpreter-api"]
     restart: unless-stopped
+    depends_on:
+      - python-executor
     env_file:
       - path: .env
         required: false
+    environment:
+      - PYTHON_EXECUTOR_DOCKER_IMAGE=onyxdotapp/python-executor-sci-custom
 
     # Below is needed for the `docker-out-of-docker` execution mode
     # For Linux rootless Docker, set DOCKER_SOCK_PATH=${XDG_RUNTIME_DIR}/docker.sock
@@ -565,3 +581,4 @@ volumes:
   file-system:
   # Persistent data for OpenSearch.
   opensearch-data:
+  sandbox-data:
