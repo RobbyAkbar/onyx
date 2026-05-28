@@ -34,6 +34,33 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
 
+# Conditionally install Node.js 20 for Craft (required for Next.js)
+# Only installed when ENABLE_CRAFT=true
+RUN if [ "$ENABLE_CRAFT" = "true" ]; then \
+        echo "Installing Node.js 20 for Craft support..." && \
+        curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+        apt-get install -y nodejs && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Conditionally install opencode CLI for Craft agent functionality
+# Only installed when ENABLE_CRAFT=true
+# TODO: download a specific, versioned release of the opencode CLI
+RUN if [ "$ENABLE_CRAFT" = "true" ]; then \
+        echo "Installing opencode CLI for Craft support..." && \
+        curl -fsSL https://opencode.ai/install | bash; \
+    fi
+ENV PATH="/root/.opencode/bin:${PATH}"
+
+# Conditionally install RTK (token-optimization proxy) for Craft
+# Only installed when ENABLE_CRAFT=true
+RUN if [ "$ENABLE_CRAFT" = "true" ]; then \
+        echo "Installing RTK for Craft support..." && \
+        curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh && \
+        /root/.local/bin/rtk init -g --opencode; \
+    fi
+ENV PATH="/root/.local/bin:${PATH}"
+
 # Install Python dependencies
 COPY ./requirements/default.txt /tmp/requirements.txt
 COPY ./requirements/ee.txt /tmp/ee-requirements.txt
@@ -135,6 +162,19 @@ RUN ln -s /usr/local/bin/supervisord /usr/bin/supervisord && \
     apt-get install -y postgresql-client && \
     rm -rf /var/lib/apt/lists/* && \
     apt-get clean
+
+# Conditionally install LibreOffice and poppler for Craft PPTX preview
+# Installed AFTER the Python deps cleanup to avoid being removed by apt-get autoremove
+RUN if [ "$ENABLE_CRAFT" = "true" ]; then \
+        echo "Installing LibreOffice and poppler for Craft PPTX preview..." && \
+        apt-get update && \
+        apt-get install -y \
+            libreoffice-core \
+            libreoffice-common \
+            libreoffice-impress \
+            poppler-utils && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 # Pre-downloading models for setups with limited egress
 RUN python -c "from tokenizers import Tokenizer; \

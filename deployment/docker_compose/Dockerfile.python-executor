@@ -1,0 +1,6 @@
+FROM onyxdotapp/python-executor-sci:latest
+
+# Install additional Python packages into the executor virtualenv
+RUN pip install --no-cache-dir \
+    --target $(/opt/executor-venv/bin/python3 -c "import site; print(site.getsitepackages()[0])") \
+    "reportlab>=4.0.0"
