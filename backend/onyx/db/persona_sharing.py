@@ -41,16 +41,21 @@ def get_persona_access_level(
     persona: Persona,
     user: User,
     user_group_ids: set[int],
+    treat_admin_as_editor: bool = True,
 ) -> PersonaAccessLevel | None:
     """Computed access for ``user`` over loaded share relations. OWNER outranks
     everything; admins report EDITOR on personas they don't own. Curators'
     group-attachment edit rights are not reflected here — this level drives
-    the sharing UI, not the editable fetch."""
+    the sharing UI, not the editable fetch.
+
+    Pass ``treat_admin_as_editor=False`` for the user's intrinsic access
+    (ownership + explicit user/group/public shares) without the blanket EDITOR
+    admins hold on every persona — used by the "Your Agents" gallery."""
     if persona.user_id == user.id or (
         persona.owner_group_id is not None and persona.owner_group_id in user_group_ids
     ):
         return PersonaAccessLevel.OWNER
-    if user.role == UserRole.ADMIN:
+    if treat_admin_as_editor and user.role == UserRole.ADMIN:
         return PersonaAccessLevel.EDITOR
 
     has_viewer_access = False
@@ -69,6 +74,19 @@ def get_persona_access_level(
             return PersonaAccessLevel.EDITOR
         has_viewer_access = True
     return PersonaAccessLevel.VIEWER if has_viewer_access else None
+
+
+def user_owns_or_edits_excluding_admin(
+    persona: Persona,
+    user: User,
+    user_group_ids: set[int],
+) -> bool:
+    """True when the user owns the persona or holds an explicit EDITOR share,
+    excluding the blanket EDITOR admins have on every persona. Drives the
+    "Your Agents" gallery, which must not list every agent for admins."""
+    return get_persona_access_level(
+        persona, user, user_group_ids, treat_admin_as_editor=False
+    ) in (PersonaAccessLevel.OWNER, PersonaAccessLevel.EDITOR)
 
 
 def derive_persona_sharing_status(persona: Persona) -> PersonaSharingStatus:

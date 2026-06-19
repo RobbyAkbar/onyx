@@ -45,6 +45,7 @@ from onyx.db.notification import create_notification
 from onyx.db.persona_sharing import get_persona_access_level
 from onyx.db.persona_sharing import get_user_group_ids_for_user
 from onyx.db.persona_sharing import persona_ownership_is_vacant
+from onyx.db.persona_sharing import user_owns_or_edits_excluding_admin
 from onyx.server.features.persona.models import FullPersonaSnapshot
 from onyx.server.features.persona.models import MinimalPersonaSnapshot
 from onyx.server.features.persona.models import PersonaSharedNotificationData
@@ -754,6 +755,25 @@ def _build_persona_filters(
     return stmt
 
 
+def _minimal_persona_snapshots_from_stmt(
+    db_session: Session, stmt: Select[tuple[Persona]], user: User
+) -> list[MinimalPersonaSnapshot]:
+    """Run ``stmt`` and project each persona into a MinimalPersonaSnapshot,
+    attaching the requesting user's computed access fields."""
+    personas = db_session.scalars(stmt).all()
+    user_group_ids = get_user_group_ids_for_user(db_session, user.id)
+    return [
+        MinimalPersonaSnapshot.from_model(
+            persona,
+            user_permission=get_persona_access_level(persona, user, user_group_ids),
+            user_is_owner_or_editor=user_owns_or_edits_excluding_admin(
+                persona, user, user_group_ids
+            ),
+        )
+        for persona in personas
+    ]
+
+
 def get_minimal_persona_snapshots_for_user(
     user: User,
     db_session: Session,
@@ -789,15 +809,7 @@ def get_minimal_persona_snapshots_for_user(
         selectinload(Persona.user_shares),
         selectinload(Persona.group_shares),
     )
-    results = db_session.scalars(stmt).all()
-    user_group_ids = get_user_group_ids_for_user(db_session, user.id)
-    return [
-        MinimalPersonaSnapshot.from_model(
-            persona,
-            user_permission=get_persona_access_level(persona, user, user_group_ids),
-        )
-        for persona in results
-    ]
+    return _minimal_persona_snapshots_from_stmt(db_session, stmt, user)
 
 
 def get_persona_snapshots_for_user(
@@ -945,15 +957,7 @@ def get_minimal_persona_snapshots_paginated(
         selectinload(Persona.group_shares),
     )
 
-    results = db_session.scalars(stmt).all()
-    user_group_ids = get_user_group_ids_for_user(db_session, user.id)
-    return [
-        MinimalPersonaSnapshot.from_model(
-            persona,
-            user_permission=get_persona_access_level(persona, user, user_group_ids),
-        )
-        for persona in results
-    ]
+    return _minimal_persona_snapshots_from_stmt(db_session, stmt, user)
 
 
 def get_persona_snapshots_paginated(

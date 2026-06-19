@@ -78,6 +78,9 @@ export interface MinimalAgent {
   owner_group: PersonaOwnerGroup | null;
   // Requesting user's computed access, set by the list/detail endpoints
   user_permission: PersonaAccessLevel | null;
+  // Owner or explicit editor, excluding admins' blanket access; set by the
+  // list endpoint and used to populate the "Your Agents" tab
+  user_is_owner_or_editor?: boolean;
 }
 
 export interface Agent extends MinimalAgent {

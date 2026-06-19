@@ -229,12 +229,16 @@ class MinimalPersonaSnapshot(BaseModel):
     owner_group: PersonaOwnerGroupSnapshot | None
     # Computed for the requesting user when the list endpoint provides it
     user_permission: PersonaAccessLevel | None = None
+    # Owner or explicit editor, excluding admins' blanket access — drives the
+    # "Your Agents" gallery filter
+    user_is_owner_or_editor: bool = False
 
     @classmethod
     def from_model(
         cls,
         persona: Persona,
         user_permission: PersonaAccessLevel | None = None,
+        user_is_owner_or_editor: bool = False,
     ) -> "MinimalPersonaSnapshot":
         # Collect unique sources from document sets, hierarchy nodes, and attached documents
         sources: set[DocumentSource] = set()
@@ -294,6 +298,7 @@ class MinimalPersonaSnapshot(BaseModel):
             ),
             owner_group=_owner_group_from_model(persona),
             user_permission=user_permission,
+            user_is_owner_or_editor=user_is_owner_or_editor,
         )
 
 
