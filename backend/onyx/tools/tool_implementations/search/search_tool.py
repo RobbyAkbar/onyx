@@ -92,6 +92,8 @@ from onyx.secondary_llm_flows.query_expansion import keyword_query_expansion
 from onyx.secondary_llm_flows.query_expansion import semantic_query_rephrase
 from onyx.secondary_llm_flows.source_filter import decide_search_scope
 from onyx.secondary_llm_flows.source_filter import SearchCycle
+from onyx.secondary_llm_flows.time_filter import decide_time_filter
+from onyx.secondary_llm_flows.time_filter import TimeFilter
 from onyx.server.query_and_chat.placement import Placement
 from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.server.query_and_chat.streaming_models import SearchToolDocumentsDelta
@@ -139,6 +141,8 @@ class QueryExpansionAndScope(BaseModel):
     semantic_query: str | None
     keyword_queries: list[str]
     plan_scope: list[DocumentSource] | None
+    # The turn's cached time window (computed once, reused across cycles).
+    time_filter: TimeFilter | None = None
 
 
 def _build_scope_note(
@@ -299,6 +303,8 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         self._search_cycles: list[SearchCycle] = []
         self._cached_expansion: tuple[str | None, list[str]] | None = None
         self._scope_decision_settled = False
+        self._time_filter: TimeFilter | None = None
+        self._time_filter_computed = False
 
         self._id = tool_id
 
@@ -589,17 +595,21 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         memories: list[str],
         decide_args: tuple[Any, ...],
     ) -> QueryExpansionAndScope:
-        """Expand the query and decide the source scope, in parallel when both apply.
+        """Expand the query and decide the source/time scope, in parallel when each
+        applies.
 
         Repeat calls reuse the cached expansion instead of re-expanding. Once the
         scope decision finds no source directive it latches off for the rest of the
-        turn, since the conversation cannot introduce one mid-turn.
+        turn, since the conversation cannot introduce one mid-turn. The time-window
+        decision is computed exactly once and cached for the rest of the turn.
         """
         expand_queries = not skip_query_expansion
         decide_scope = not self._scope_decision_settled
+        decide_time = not self._time_filter_computed
 
         jobs: list[tuple[Callable, tuple]] = []
         scope_job_index: int | None = None
+        time_job_index: int | None = None
         if expand_queries:
             expansion_args = (message_history, self.llm, user_info, memories)
             jobs.append((semantic_query_rephrase, expansion_args))
@@ -607,6 +617,9 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         if decide_scope:
             scope_job_index = len(jobs)
             jobs.append((decide_search_scope, decide_args))
+        if decide_time:
+            time_job_index = len(jobs)
+            jobs.append((decide_time_filter, (message_history, self.llm)))
 
         results = run_functions_tuples_in_parallel(jobs) if jobs else []
 
@@ -622,10 +635,15 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
             plan_scope = results[scope_job_index]
             self._scope_decision_settled = plan_scope is None
 
+        if time_job_index is not None:
+            self._time_filter = results[time_job_index]
+            self._time_filter_computed = True
+
         return QueryExpansionAndScope(
             semantic_query=semantic_query,
             keyword_queries=keyword_queries,
             plan_scope=plan_scope,
+            time_filter=self._time_filter,
         )
 
     @log_function_time(print_only=True)
@@ -857,6 +875,22 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
             # Disable the Slack federated search when Slack is out of scope.
             if DocumentSource.SLACK not in resolved_scope:
                 slack_access_token = None
+
+        # Apply the turn's cached time window. The lower bound composes with any
+        # persona time floor downstream in the search pipeline.
+        time_filter = expansion.time_filter
+        if time_filter is not None and time_filter.has_bounds():
+            effective_filters = (effective_filters or BaseFilters()).model_copy(
+                update={
+                    "time_cutoff": time_filter.start,
+                    "time_cutoff_upper": time_filter.end,
+                }
+            )
+            logger.info(
+                "Internal search - time window: %s to %s",
+                time_filter.start.isoformat() if time_filter.start else "any",
+                time_filter.end.isoformat() if time_filter.end else "any",
+            )
 
         # Prepare queries with their weights and hybrid_alpha settings
         # Group 1: Keyword queries (use hybrid_alpha=0.2)

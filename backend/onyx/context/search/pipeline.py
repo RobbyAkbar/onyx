@@ -81,7 +81,14 @@ def _build_index_filters(
         else persona_document_sets
     )
 
-    time_filter = base_filters.time_cutoff or persona_time_cutoff
+    # Compose the requested lower bound with the persona's time floor — take the
+    # later (more restrictive) of the two so neither bound can be loosened.
+    lower_bounds = [
+        bound
+        for bound in (base_filters.time_cutoff, persona_time_cutoff)
+        if bound is not None
+    ]
+    time_filter = max(lower_bounds) if lower_bounds else None
     source_filter = base_filters.source_type
 
     if bypass_acl:
