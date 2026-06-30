@@ -62,7 +62,7 @@ class SkillAccessPolicy(str, Enum):
     USE = "use"
 
 
-def _authored_custom_skill_clause(user: User) -> ColumnElement[bool]:
+def _is_skill_author_clause(user: User) -> ColumnElement[bool]:
     return and_(
         Skill.author_user_id == user.id,
         Skill.built_in_skill_id.is_(None),
@@ -147,7 +147,7 @@ def _user_view_clause(user: User, *, admin_bypass: bool) -> ColumnElement[bool]:
         Skill.is_public.is_(True),
         _user_share_exists(user),
         _group_share_exists(user),
-        _authored_custom_skill_clause(user),
+        _is_skill_author_clause(user),
     )
 
 
@@ -163,7 +163,7 @@ def _user_edit_clause(user: User) -> ColumnElement[bool]:
 
     if user.role == UserRole.ADMIN:
         return or_(
-            _authored_custom_skill_clause(user),
+            _is_skill_author_clause(user),
             editor_share_clause,
             Skill.is_public.is_(True),
             _any_share_exists(),
@@ -171,13 +171,13 @@ def _user_edit_clause(user: User) -> ColumnElement[bool]:
 
     if user.role in (UserRole.CURATOR, UserRole.GLOBAL_CURATOR):
         return or_(
-            _authored_custom_skill_clause(user),
+            _is_skill_author_clause(user),
             editor_share_clause,
             _curator_group_management_clause(user),
         )
 
     return or_(
-        _authored_custom_skill_clause(user),
+        _is_skill_author_clause(user),
         editor_share_clause,
     )
 
