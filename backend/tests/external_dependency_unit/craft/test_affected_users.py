@@ -17,6 +17,7 @@ from tests.external_dependency_unit.craft.db_helpers import make_group
 from tests.external_dependency_unit.craft.db_helpers import make_sandbox
 from tests.external_dependency_unit.craft.db_helpers import make_skill
 from tests.external_dependency_unit.craft.db_helpers import make_user
+from tests.external_dependency_unit.craft.db_helpers import share_skill_with_user
 
 
 class TestAffectedUserIdsForSkill:
@@ -81,6 +82,23 @@ class TestAffectedUserIdsForSkill:
         # is reported exactly once.
         matches = [uid for uid in result if uid == user.id]
         assert len(matches) == 1
+
+    def test_private_skill_returns_directly_shared_user(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        shared_user = make_user(db_session)
+        unshared_user = make_user(db_session)
+        make_sandbox(db_session, shared_user)
+        make_sandbox(db_session, unshared_user)
+        skill = make_skill(db_session, is_public=False)
+        share_skill_with_user(db_session, skill, shared_user)
+
+        result = affected_user_ids_for_skill(skill, db_session)
+
+        assert shared_user.id in result
+        assert unshared_user.id not in result
 
     def test_disabled_skill_still_returns_affected_users(
         self,

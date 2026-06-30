@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from onyx.db.models import User
 from onyx.db.skill import fetch_skill_for_user
 from onyx.db.skill import fetch_skill_for_user_by_slug
+from onyx.db.skill import list_skills_for_admin
 from onyx.db.skill import list_skills_for_sandbox_injection
 from onyx.db.skill import list_skills_for_user
 from tests.external_dependency_unit.craft.db_helpers import make_external_app
@@ -94,6 +95,19 @@ def test_skills_endpoint_hides_external_app_with_no_required_keys(
     make_external_app(db_session, skill=skill, auth_template={})
 
     assert skill.id not in _endpoint_ids(user, db_session)
+
+
+def test_admin_skills_endpoint_hides_external_app(
+    db_session: Session,
+    test_user: User,  # noqa: ARG001
+) -> None:
+    regular = make_skill(db_session, is_public=True, slug="plain-admin-skill")
+    external = make_skill(db_session, is_public=True, slug="ext-admin-hidden")
+    make_external_app(db_session, skill=external, auth_template={})
+
+    visible = {s.id for s in list_skills_for_admin(db_session)}
+    assert regular.id in visible
+    assert external.id not in visible
 
 
 def test_regular_skill_still_visible_in_skills_endpoint(
