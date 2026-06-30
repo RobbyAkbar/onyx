@@ -96,6 +96,7 @@ from onyx.db.enums import ScheduledTaskStatus
 from onyx.db.enums import ScheduledTaskTriggerSource
 from onyx.db.enums import SessionOrigin
 from onyx.db.enums import SharingScope
+from onyx.db.enums import SkillSharePermission
 from onyx.db.enums import SwitchoverType
 from onyx.db.enums import SyncStatus
 from onyx.db.enums import SyncType
@@ -633,6 +634,28 @@ class Persona__User(Base):
     )
 
     user: Mapped["User | None"] = relationship("User")
+
+
+class Skill__User(Base):
+    __tablename__ = "skill__user"
+
+    skill_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("skill.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    permission: Mapped[SkillSharePermission] = mapped_column(
+        Enum(SkillSharePermission, native_enum=False),
+        nullable=False,
+        default=SkillSharePermission.VIEWER,
+        server_default=SkillSharePermission.VIEWER.value,
+    )
+
+    user: Mapped["User"] = relationship("User")
 
 
 class DocumentSet__User(Base):
@@ -4295,6 +4318,12 @@ class Skill(Base):
         nullable=True,
     )
     is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    public_permission: Mapped[SkillSharePermission] = mapped_column(
+        Enum(SkillSharePermission, native_enum=False),
+        nullable=False,
+        default=SkillSharePermission.VIEWER,
+        server_default=SkillSharePermission.VIEWER.value,
+    )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -4312,10 +4341,27 @@ class Skill(Base):
         foreign_keys=[author_user_id],
     )
 
+    users: Mapped[list[User]] = relationship(
+        "User",
+        secondary=Skill__User.__table__,
+        viewonly=True,
+        overlaps="user_shares",
+    )
+    user_shares: Mapped[list[Skill__User]] = relationship(
+        "Skill__User",
+        viewonly=True,
+        overlaps="users",
+    )
+    group_shares: Mapped[list["Skill__UserGroup"]] = relationship(
+        "Skill__UserGroup",
+        viewonly=True,
+        overlaps="groups",
+    )
     groups: Mapped[list["UserGroup"]] = relationship(
         "UserGroup",
         secondary="skill__user_group",
         viewonly=True,
+        overlaps="group_shares",
     )
 
     __table_args__ = (
@@ -4473,6 +4519,14 @@ class Skill__UserGroup(Base):
         ForeignKey("user_group.id", ondelete="CASCADE"),
         primary_key=True,
     )
+    permission: Mapped[SkillSharePermission] = mapped_column(
+        Enum(SkillSharePermission, native_enum=False),
+        nullable=False,
+        default=SkillSharePermission.VIEWER,
+        server_default=SkillSharePermission.VIEWER.value,
+    )
+
+    user_group: Mapped["UserGroup"] = relationship("UserGroup")
 
 
 class LLMProvider__Persona(Base):
