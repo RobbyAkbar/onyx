@@ -78,6 +78,20 @@ def test_gitlab_subgroup_url_constructed(monkeypatch: pytest.MonkeyPatch) -> Non
     )
 
 
+def test_url_components_are_percent_encoded(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A ref carrying URL-structural chars must be encoded so it can't truncate
+    # the path as a fragment/query; slashed refs keep their '/'.
+    seen: dict[str, str] = {}
+
+    def fake_get(url: str, **_kwargs: Any) -> _FakeResponse:
+        seen["url"] = url
+        return _FakeResponse(200, [b"x"])
+
+    monkeypatch.setattr("onyx.skills.marketplace.ssrf_safe_get", fake_get)
+    fetch_repo_archive(_source("github.com", "o", "r", "feature/x#frag"))
+    assert seen["url"] == "https://codeload.github.com/o/r/tar.gz/feature/x%23frag"
+
+
 def test_404_maps_to_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "onyx.skills.marketplace.ssrf_safe_get",

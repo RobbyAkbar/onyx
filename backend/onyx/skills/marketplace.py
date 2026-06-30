@@ -13,6 +13,7 @@ import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote
 from urllib.parse import urlparse
 
 import requests
@@ -242,13 +243,21 @@ def fetch_repo_archive(source: ParsedSource) -> bytes:
     """Download the repository tar.gz archive for the given ParsedSource."""
     ref = source.ref or "HEAD"
 
+    # owner/repo/ref come from URL path segments that urlparse already decoded,
+    # so re-encode before interpolating — an unescaped '#'/'?' would otherwise
+    # truncate the path as a fragment/query and fetch a different resource.
+    # safe="/" keeps subgroup and slashed-ref separators intact.
+    owner = quote(source.owner, safe="/")
+    repo = quote(source.repo, safe="")
+    ref_enc = quote(ref, safe="/")
+
     if source.host == "github.com":
-        url = f"https://codeload.github.com/{source.owner}/{source.repo}/tar.gz/{ref}"
+        url = f"https://codeload.github.com/{owner}/{repo}/tar.gz/{ref_enc}"
     else:
         # gitlab.com
         url = (
-            f"https://gitlab.com/{source.owner}/{source.repo}"
-            f"/-/archive/{ref}/{source.repo}-{ref}.tar.gz"
+            f"https://gitlab.com/{owner}/{repo}"
+            f"/-/archive/{ref_enc}/{repo}-{ref_enc}.tar.gz"
         )
 
     try:
