@@ -142,7 +142,7 @@ class QueryExpansionAndScope(BaseModel):
     keyword_queries: list[str]
     plan_scope: list[DocumentSource] | None
     # The turn's cached time window (computed once, reused across cycles).
-    time_filter: TimeFilter | None = None
+    time_filter: TimeFilter = (None, None)
 
 
 def _build_scope_note(
@@ -303,7 +303,7 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
         self._search_cycles: list[SearchCycle] = []
         self._cached_expansion: tuple[str | None, list[str]] | None = None
         self._scope_decision_settled = False
-        self._time_filter: TimeFilter | None = None
+        self._time_filter: TimeFilter = (None, None)
         self._time_filter_computed = False
 
         self._id = tool_id
@@ -878,18 +878,18 @@ class SearchTool(Tool[SearchToolOverrideKwargs]):
 
         # Apply the turn's cached time window. The lower bound composes with any
         # persona time floor downstream in the search pipeline.
-        time_filter = expansion.time_filter
-        if time_filter is not None and time_filter.has_bounds():
+        time_start, time_end = expansion.time_filter
+        if time_start is not None or time_end is not None:
             effective_filters = (effective_filters or BaseFilters()).model_copy(
                 update={
-                    "time_cutoff": time_filter.start,
-                    "time_cutoff_upper": time_filter.end,
+                    "time_cutoff": time_start,
+                    "time_cutoff_upper": time_end,
                 }
             )
             logger.info(
                 "Internal search - time window: %s to %s",
-                time_filter.start.isoformat() if time_filter.start else "any",
-                time_filter.end.isoformat() if time_filter.end else "any",
+                time_start.isoformat() if time_start else "any",
+                time_end.isoformat() if time_end else "any",
             )
 
         # Prepare queries with their weights and hybrid_alpha settings

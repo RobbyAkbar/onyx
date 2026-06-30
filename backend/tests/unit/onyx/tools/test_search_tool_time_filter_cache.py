@@ -17,14 +17,14 @@ def _make_tool() -> SearchTool:
     tool.llm = MagicMock()
     tool._scope_decision_settled = True  # skip the source-scope job
     tool._cached_expansion = None
-    tool._time_filter = None
+    tool._time_filter = (None, None)
     tool._time_filter_computed = False
     return tool
 
 
 def test_time_filter_runs_once_and_caches_for_the_turn() -> None:
     tool = _make_tool()
-    decided = TimeFilter(start=datetime(2025, 1, 1, tzinfo=timezone.utc), end=None)
+    decided: TimeFilter = (datetime(2025, 1, 1, tzinfo=timezone.utc), None)
 
     scheduled: list[list] = []
 
@@ -60,6 +60,6 @@ def test_time_filter_runs_once_and_caches_for_the_turn() -> None:
     assert decide_time_filter in scheduled[0]
 
     # Both cycles surface the same cached decision.
-    assert first.time_filter is decided
-    assert second.time_filter is decided
+    assert first.time_filter == decided
+    assert second.time_filter == decided
     assert tool._time_filter_computed is True

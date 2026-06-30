@@ -1,10 +1,9 @@
-import json
+import re
 from datetime import datetime
 from datetime import time
 from datetime import timezone
 
 from dateutil.parser import parse
-from pydantic import BaseModel
 
 from onyx.configs.constants import MessageType
 from onyx.llm.interfaces import LLM
@@ -25,18 +24,14 @@ logger = setup_logger()
 MAX_TIME_FILTER_USER_TURNS = 5
 
 
-class TimeFilter(BaseModel):
-    """A time window detected from the conversation: an inclusive [start, end]
-    bound on a document's last-updated date (either side may be None).
-    favor_recent is a soft preference for fresh results (reserved — not yet
-    wired into ranking)."""
+# An inclusive (start, end) bound on a document's last-updated date, detected
+# from the conversation. Either side may be None, meaning that bound is not
+# applied; (None, None) means search across all time.
+TimeFilter = tuple[datetime | None, datetime | None]
 
-    start: datetime | None = None
-    end: datetime | None = None
-    favor_recent: bool = False
-
-    def has_bounds(self) -> bool:
-        return self.start is not None or self.end is not None
+# Matches the model's "(start, end)" output. Each side is captured as a token
+# (a date or "None"); neither may contain a comma or parenthesis.
+_TIME_FILTER_PAIR_RE = re.compile(r"\(\s*([^(),]+?)\s*,\s*([^(),]+?)\s*\)")
 
 
 def best_match_time(time_str: str) -> datetime | None:
@@ -64,54 +59,51 @@ def best_match_time(time_str: str) -> datetime | None:
         return None
 
 
-def _parse_time_decision(content: str | None) -> TimeFilter | None:
-    """Parse the model's JSON ({"filter_type", "start_date", "end_date"}) into a
-    TimeFilter. Returns None on anything unparseable or a "none" decision so the
-    caller searches across all time."""
+def _parse_bound(token: str) -> datetime | None:
+    """Parse one side of the model's pair: a "YYYY-MM-DD" date, or None."""
+    token = token.strip().strip("'\"")
+    if token.lower() in ("none", "null"):
+        return None
+    return best_match_time(token)
+
+
+def _parse_time_decision(content: str | None) -> TimeFilter:
+    """Parse the model's "(start, end)" output into an inclusive (start, end)
+    window. Each side is a "YYYY-MM-DD" date or None. Returns (None, None) on
+    anything unparseable so the caller searches across all time."""
     if not content:
-        return None
-    try:
-        model_json = json.loads(content, strict=False)
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Time filter output was not valid JSON: %s", content)
-        return None
-    if not isinstance(model_json, dict):
-        return None
+        return (None, None)
+    # Tolerates code fences / stray text some models wrap the pair in.
+    match = _TIME_FILTER_PAIR_RE.search(content)
+    if match is None:
+        logger.warning("Time filter output was not a (start, end) pair: %s", content)
+        return (None, None)
 
-    filter_type = str(model_json.get("filter_type", "")).strip().lower()
-    if filter_type in ("none", ""):
-        return None
-    if filter_type == "favor_recent":
-        return TimeFilter(favor_recent=True)
-
-    start_raw = model_json.get("start_date")
-    end_raw = model_json.get("end_date")
-
-    start = best_match_time(start_raw) if isinstance(start_raw, str) else None
+    start = _parse_bound(match.group(1))
     # The upper bound is inclusive of the whole named day, so push it to the end
     # of that day before comparing against second-granularity document times.
-    end_day = best_match_time(end_raw) if isinstance(end_raw, str) else None
+    end_day = _parse_bound(match.group(2))
     end = (
         datetime.combine(end_day.date(), time.max, tzinfo=timezone.utc)
         if end_day
         else None
     )
 
-    if start is None and end is None:
-        return None
-    return TimeFilter(start=start, end=end)
+    return (start, end)
 
 
 def decide_time_filter(
     history: list[ChatMinimalTextMessage],
     llm: LLM,
-) -> TimeFilter | None:
+) -> TimeFilter:
     """Detect, in one LLM call, the time window this turn's internal search should
     be restricted to, from the conversation.
 
-    Returns a TimeFilter, or None to search across all time. Fails open to None on
-    any error. The decision is conversation-derived and stable across the repeated
-    search cycles within a turn, so the caller computes it once and caches it.
+    Returns an inclusive (start, end) window; either side is None to leave that
+    bound unset, and (None, None) means search across all time. Fails open to
+    (None, None) on any error. The decision is conversation-derived and stable
+    across the repeated search cycles within a turn, so the caller computes it
+    once and caches it.
     """
     user_turns = [
         msg.message.strip()
@@ -119,7 +111,7 @@ def decide_time_filter(
         if msg.message_type == MessageType.USER and msg.message.strip()
     ]
     if not user_turns:
-        return None
+        return (None, None)
     user_turns = user_turns[-MAX_TIME_FILTER_USER_TURNS:]
 
     last_user_query = user_turns[-1]
@@ -149,6 +141,6 @@ def decide_time_filter(
             content = response.choice.message.content
     except Exception:
         logger.exception("Time filter decision failed; searching across all time")
-        return None
+        return (None, None)
 
     return _parse_time_decision(content)

@@ -3,51 +3,78 @@
 # or Slack
 SOURCES_KEY = "sources"
 
-# Used in time_filter.py: detect a time window the user is asking about and turn
-# it into explicit ISO dates. The model is given today's date and does the
-# relative-date math itself, so ranges and named periods fall out naturally.
+# Used in time_filter.py: detect the time an internal search should be restricted
+# to and turn it into an explicit (start, end) pair of ISO dates. The model is
+# given today's date and does the relative-date math itself, so ranges and named
+# times fall out naturally.
 # Filled with: {current_day_time_str}, {conversation_history}, {last_user_query}.
 TIME_SCOPE_DECISION_PROMPT = """
-You detect the time window an internal search should be restricted to, from the user's \
-conversation. The downstream search can apply a lower bound, an upper bound, or both \
-(a range) on each document's last-updated date.
+You detect the time filter an internal search should be restricted to, from the user's \
+conversation. When the conversation EXPLICITLY refers to a time, set a time filter on each \
+document's last-updated date; when it refers to no time, set no time filter — (None, None), \
+searching across all time. You filter only by time — other scoping is handled by other \
+systems.
 
-Today is {current_day_time_str}. Resolve every relative expression against this date.
+A time filter is a pair (start, end): start is an inclusive lower bound and end an inclusive \
+upper bound on the last-updated date. Either bound is a date or None (no bound on that side). \
+Today is {current_day_time_str}; resolve every time the user refers to against today, into \
+concrete dates yourself.
 
 ## Guidance
 
-Only apply a time filter when the user EXPLICITLY refers to time — "last week", "since March", \
-"in January", "between Q1 and Q2", "on the 25th of March", "documents from 2022". NEVER infer a \
-time window from the topic alone. If no time is referenced, return filter_type "none".
+Set a time filter only when the user EXPLICITLY refers to a time — "last week", "since \
+March", "in January", "between Q1 and Q2", "on the 25th of March", "documents from 2022". \
+NEVER infer a time from the topic alone. When the user refers to no time, set (None, None).
 
-Resolve expressions to concrete dates yourself:
-- A bare point in the past with no end ("since March", "in the last 3 months", "after 2023") is a \
-hard_cutoff: set start_date, leave end_date null.
-- A named or bounded period IS a range — set BOTH start_date and end_date to its first and last \
-day. "last January" → that January's 1st through 31st. "Q1 2025" → 01/01 through 03/31. \
-"last quarter", "in 2022", "between March and June" all behave this way.
-- A single day ("on the 25th of March", "March 25 2024") is a range where start_date == end_date.
-- A vague preference for fresh results with no boundary ("the latest", "most recent") is \
-favor_recent with both dates null.
+When the user DOES refer to a time, the phrasing decides the bounds:
+
+- LOWER BOUND ONLY — an open-ended time toward the present ("since March", "in the last 3 \
+months", "after 2023"). Set start; leave end None.
+
+- UPPER BOUND ONLY — an open-ended time toward the past ("before 2023", "older than \
+January"). Set end; leave start None.
+
+- BOTH BOUNDS — a named or bounded time. Set start and end to its first and last day. \
+"last January" → start its January 1st, end its January 31st. "Q1 2025" → start 2025-01-01, \
+end 2025-03-31. "last quarter", "in 2022", "between March and June" all behave this way. A \
+single day ("on the 25th of March", "March 25 2024") sets start and end to the same day.
+
+- NO BOUND — a vague preference for fresh results with no time ("the latest", "most \
+recent"). Set both start and end to None.
 
 ## Conversation history
 
 {conversation_history}
 
+## Guidance reminder
+
+Set a time filter only when the user EXPLICITLY refers to a time; NEVER infer a time from \
+the topic alone, and set (None, None) when the user refers to no time. An open-ended time \
+sets one bound and leaves the other None. A named or bounded time sets both bounds. A vague \
+preference for fresh results sets (None, None).
+
 ## Output format
 
-Answer with ONLY a JSON object with keys "filter_type", "start_date", "end_date".
-- "filter_type": one of "hard_cutoff", "range", "favor_recent", "none".
-- "start_date" / "end_date": a date as "YYYY-MM-DD", or null.
+Output ONLY the time filter as a pair: (start, end)
+- start is the lower bound and end is the upper bound, each a date as "YYYY-MM-DD" or None.
+- Both bounds are inclusive; None means no bound on that side.
 
-Do not include any explanation or text outside the JSON object.
+Examples:
+- "since March 2025" → (2025-03-01, None)
+- "before 2023" → (None, 2022-12-31)
+- "in January 2025" → (2025-01-01, 2025-01-31)
+- "on March 25, 2024" → (2024-03-25, 2024-03-25)
+- "the latest billing docs" → (None, None)
+- "how do I configure SSO?" → (None, None)
+
+Do not include any formatting, explanations, or other text aside from the pair.
 
 ## Query reminder
 
 The user's latest message is:
 {last_user_query}
 
-CRITICAL: output only the JSON object.
+CRITICAL: output only the (start, end) pair.
 """.strip()
 
 
