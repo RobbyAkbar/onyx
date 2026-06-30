@@ -33,6 +33,7 @@ from onyx.db.enums import ConnectorCredentialPairStatus
 from onyx.db.enums import EndpointPolicy
 from onyx.db.enums import ExternalAppType
 from onyx.db.enums import SandboxStatus
+from onyx.db.enums import SkillSharePermission
 from onyx.db.models import ActionApproval
 from onyx.db.models import Connector
 from onyx.db.models import ConnectorCredentialPair
@@ -42,6 +43,7 @@ from onyx.db.models import ExternalAppPolicy
 from onyx.db.models import ExternalAppUserCredential
 from onyx.db.models import Sandbox
 from onyx.db.models import Skill
+from onyx.db.models import Skill__User
 from onyx.db.models import Skill__UserGroup
 from onyx.db.models import User
 from onyx.db.models import User__UserGroup
@@ -262,14 +264,48 @@ def make_user_credential(
     return cred
 
 
-def grant_skill_to_group(
-    db_session: Session, skill: Skill, group: UserGroup
-) -> Skill__UserGroup:
-    """Insert a ``Skill__UserGroup`` grant row."""
-    grant = Skill__UserGroup(skill_id=skill.id, user_group_id=group.id)
-    db_session.add(grant)
+def share_skill_with_user(
+    db_session: Session,
+    skill: Skill,
+    user: User,
+    permission: SkillSharePermission = SkillSharePermission.VIEWER,
+) -> Skill__User:
+    """Insert a ``Skill__User`` share row."""
+    share = Skill__User(
+        skill_id=skill.id,
+        user_id=user.id,
+        permission=permission,
+    )
+    db_session.add(share)
     db_session.flush()
-    return grant
+    return share
+
+
+def share_skill_with_group(
+    db_session: Session,
+    skill: Skill,
+    group: UserGroup,
+    permission: SkillSharePermission = SkillSharePermission.VIEWER,
+) -> Skill__UserGroup:
+    """Insert a ``Skill__UserGroup`` share row."""
+    share = Skill__UserGroup(
+        skill_id=skill.id,
+        user_group_id=group.id,
+        permission=permission,
+    )
+    db_session.add(share)
+    db_session.flush()
+    return share
+
+
+def grant_skill_to_group(
+    db_session: Session,
+    skill: Skill,
+    group: UserGroup,
+    permission: SkillSharePermission = SkillSharePermission.VIEWER,
+) -> Skill__UserGroup:
+    """Backward-compatible alias for group skill shares."""
+    return share_skill_with_group(db_session, skill, group, permission)
 
 
 def make_cc_pair(
