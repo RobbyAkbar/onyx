@@ -625,6 +625,9 @@ def _install_repo_skills(
     personal path uses it for the advisory-lock + cap check. ``group_ids`` are
     granted per row; an empty list (the personal path) skips grants. Returns the
     created rows (caller owns the sandbox push) and the per-skill failures.
+
+    Commits ``db_session`` before returning, so any writes already pending on
+    the caller's request-scoped session are flushed too.
     """
     parsed = parse_skill_source(source)
     archive = fetch_repo_archive(parsed)
