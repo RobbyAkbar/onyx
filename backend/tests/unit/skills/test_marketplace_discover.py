@@ -305,6 +305,62 @@ def test_manifest_path_confinement() -> None:
     assert "escape" not in slugs
 
 
+def test_subpath_traversal_escape_raises() -> None:
+    archive = make_tar({"repo-main/skills/tool/SKILL.md": _VALID_SKILL_MD})
+    with pytest.raises(OnyxError, match="escapes repository root"):
+        with extracted_skills(archive, subpath="../../etc") as _:
+            pass
+
+
+def test_manifest_plugins_format_discovered() -> None:
+    archive = make_tar(
+        {
+            "repo-main/.claude-plugin/plugin.json": (
+                '{"plugins": [{"metadata": {"pluginRoot": "pkg"}, '
+                '"skills": ["widget"]}]}'
+            ),
+            "repo-main/pkg/widget/SKILL.md": _VALID_SKILL_MD,
+        }
+    )
+    with extracted_skills(archive) as skills:
+        slugs = {s.slug for s in skills}
+    assert "widget" in slugs
+
+
+def test_manifest_plugins_escaping_plugin_root_skipped() -> None:
+    archive = make_tar(
+        {
+            "repo-main/.claude-plugin/marketplace.json": (
+                '{"plugins": ['
+                '{"metadata": {"pluginRoot": "../evil"}, "skills": ["x"]}, '
+                '{"metadata": {"pluginRoot": "pkg"}, "skills": ["widget"]}'
+                "]}"
+            ),
+            "repo-main/pkg/widget/SKILL.md": _VALID_SKILL_MD,
+        }
+    )
+    with extracted_skills(archive) as skills:
+        slugs = {s.slug for s in skills}
+    assert "widget" in slugs
+    assert "x" not in slugs
+
+
+def test_build_bundle_per_file_cap_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Extract at the real cap, then lower it for the build — moving the
+    # monkeypatch before extraction would trip the extraction-time cap instead.
+    archive = make_tar(
+        {
+            "repo-main/skills/my-tool/SKILL.md": _VALID_SKILL_MD,
+            "repo-main/skills/my-tool/big.bin": "x" * 256,
+        }
+    )
+    with extracted_skills(archive) as skills:
+        assert len(skills) == 1
+        monkeypatch.setattr("onyx.skills.marketplace.DEFAULT_PER_FILE_MAX_BYTES", 16)
+        with pytest.raises(OnyxError):
+            build_bundle_for_skill(skills[0])
+
+
 def test_agents_skills_layout_discovered() -> None:
     archive = make_tar({"repo-main/.agents/skills/ag/SKILL.md": _VALID_SKILL_MD})
     with extracted_skills(archive) as skills:
