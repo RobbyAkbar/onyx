@@ -577,7 +577,7 @@ def _parse_group_ids(raw: str) -> list[int]:
 def _preview_repo_skills(source: str) -> RepoSkillsPreview:
     parsed = parse_skill_source(source)
     archive = fetch_repo_archive(parsed)
-    source_label = f"{parsed.owner}/{parsed.repo}"
+    source_label = f"{parsed.host}/{parsed.owner}/{parsed.repo}"
     with extracted_skills(archive, parsed.subpath) as discovered:
         items: list[RepoSkillPreviewItem] = []
         for skill in discovered:

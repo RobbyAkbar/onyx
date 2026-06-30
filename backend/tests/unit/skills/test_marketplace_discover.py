@@ -149,9 +149,10 @@ def test_subpath_filters_skills() -> None:
     )
     with extracted_skills(archive, subpath="skills/in-scope") as skills:
         slugs = {s.slug for s in skills}
-    # Exactly one skill found — the one inside the subpath.
-    # When skill_dir IS the search_root, slug = repo_root.name stripped of "-main" → "repo".
-    assert len(skills) == 1
+    # Exactly one skill found — the one inside the subpath. A subpath leaf keeps
+    # its own dir name as the slug (only a true repo-root SKILL.md falls back to
+    # the repo wrapper name), so the slug is "in-scope", not "repo".
+    assert slugs == {"in-scope"}
     assert "outside" not in slugs
 
 
@@ -199,3 +200,152 @@ def test_invalid_skill_md_only_no_crash() -> None:
     archive = make_tar({"repo-main/skills/bad/SKILL.md": bad_skill_md})
     with extracted_skills(archive) as skills:
         assert skills == []
+
+
+def _tar_with_special_member(member_type: bytes, name: str = "repo-main/evil") -> bytes:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        ti = tarfile.TarInfo(name)
+        ti.type = member_type
+        if member_type in (tarfile.SYMTYPE, tarfile.LNKTYPE):
+            ti.linkname = "/etc/passwd"
+        ti.size = 0
+        ti.mtime = 0
+        tf.addfile(ti)
+    return buf.getvalue()
+
+
+def test_tar_symlink_rejected() -> None:
+    # A symlink member could point anywhere on the host — extraction must refuse.
+    archive = _tar_with_special_member(tarfile.SYMTYPE)
+    with pytest.raises(OnyxError):
+        with extracted_skills(archive) as _:
+            pass
+
+
+def test_tar_hardlink_rejected() -> None:
+    archive = _tar_with_special_member(tarfile.LNKTYPE)
+    with pytest.raises(OnyxError):
+        with extracted_skills(archive) as _:
+            pass
+
+
+def test_tar_non_regular_member_rejected() -> None:
+    # Device/FIFO members are neither file nor dir — must be refused.
+    archive = _tar_with_special_member(tarfile.FIFOTYPE)
+    with pytest.raises(OnyxError):
+        with extracted_skills(archive) as _:
+            pass
+
+
+def test_per_file_size_cap_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("onyx.skills.marketplace.DEFAULT_PER_FILE_MAX_BYTES", 8)
+    archive = make_tar_bytes({"repo-main/skills/big/SKILL.md": b"x" * 64})
+    with pytest.raises(OnyxError):
+        with extracted_skills(archive) as _:
+            pass
+
+
+def test_total_size_cap_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("onyx.skills.marketplace.DEFAULT_PER_FILE_MAX_BYTES", 1024)
+    monkeypatch.setattr("onyx.skills.marketplace.DEFAULT_TOTAL_MAX_BYTES", 16)
+    archive = make_tar_bytes(
+        {
+            "repo-main/skills/a/SKILL.md": b"x" * 12,
+            "repo-main/skills/b/SKILL.md": b"y" * 12,
+        }
+    )
+    with pytest.raises(OnyxError):
+        with extracted_skills(archive) as _:
+            pass
+
+
+def test_member_count_cap_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("onyx.skills.marketplace._TAR_MAX_MEMBERS", 2)
+    archive = make_tar(
+        {
+            "repo-main/a.txt": "a",
+            "repo-main/b.txt": "b",
+            "repo-main/c.txt": "c",
+        }
+    )
+    with pytest.raises(OnyxError):
+        with extracted_skills(archive) as _:
+            pass
+
+
+def test_manifest_declared_skill_discovered() -> None:
+    # .claude-plugin/marketplace.json "skills" array points at a dir whose name
+    # need not match any of the auto-scanned layouts.
+    archive = make_tar(
+        {
+            "repo-main/.claude-plugin/marketplace.json": '{"skills": ["tools/widget"]}',
+            "repo-main/tools/widget/SKILL.md": _VALID_SKILL_MD,
+        }
+    )
+    with extracted_skills(archive) as skills:
+        slugs = {s.slug for s in skills}
+    assert "widget" in slugs
+
+
+def test_manifest_path_confinement() -> None:
+    # An escaping manifest entry is ignored (untrusted archive content); the
+    # confined sibling entry is still discovered.
+    archive = make_tar(
+        {
+            "repo-main/.claude-plugin/marketplace.json": (
+                '{"skills": ["nested/ok", "../escape", "/etc"]}'
+            ),
+            "repo-main/nested/ok/SKILL.md": _VALID_SKILL_MD,
+        }
+    )
+    with extracted_skills(archive) as skills:
+        slugs = {s.slug for s in skills}
+    assert "ok" in slugs
+    assert "escape" not in slugs
+
+
+def test_agents_skills_layout_discovered() -> None:
+    archive = make_tar({"repo-main/.agents/skills/ag/SKILL.md": _VALID_SKILL_MD})
+    with extracted_skills(archive) as skills:
+        slugs = {s.slug for s in skills}
+    assert "ag" in slugs
+
+
+def test_curated_container_discovered() -> None:
+    archive = make_tar({"repo-main/skills/.curated/cur/SKILL.md": _VALID_SKILL_MD})
+    with extracted_skills(archive) as skills:
+        slugs = {s.slug for s in skills}
+    assert "cur" in slugs
+
+
+def test_non_sluggable_dir_name_skipped() -> None:
+    archive = make_tar(
+        {
+            "repo-main/skills/!!!/SKILL.md": _VALID_SKILL_MD,
+            "repo-main/skills/good/SKILL.md": _VALID_SKILL_MD,
+        }
+    )
+    with extracted_skills(archive) as skills:
+        slugs = {s.slug for s in skills}
+    assert slugs == {"good"}
+
+
+def test_build_bundle_excludes_template_and_pycache() -> None:
+    archive = make_tar(
+        {
+            "repo-main/skills/my-tool/SKILL.md": _VALID_SKILL_MD,
+            "repo-main/skills/my-tool/keep.py": "print('hi')\n",
+            "repo-main/skills/my-tool/SKILL.md.template": "ignored\n",
+            "repo-main/skills/my-tool/__pycache__/x.pyc": "bytecode\n",
+        }
+    )
+    with extracted_skills(archive) as skills:
+        assert len(skills) == 1
+        bundle = build_bundle_for_skill(skills[0])
+
+    names = zipfile.ZipFile(io.BytesIO(bundle)).namelist()
+    assert "SKILL.md" in names
+    assert "keep.py" in names
+    assert "SKILL.md.template" not in names
+    assert not any("__pycache__" in n for n in names)

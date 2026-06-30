@@ -347,6 +347,39 @@ class TestInstallPersonalRepoSkills:
                 "owner/repo", [slug_a, slug_b], test_user, db_session
             )
 
+    def test_cap_counts_only_resolved_installs(
+        self,
+        db_session: Session,
+        test_user: User,
+        monkeypatch: pytest.MonkeyPatch,
+        request: pytest.FixtureRequest,
+        tenant_context: None,  # noqa: ARG002
+    ) -> None:
+        # before_install must receive the post-filter install count: a not-found
+        # slug must not count toward the cap. Cap=1, request [real, missing] →
+        # exactly one real install, no cap error.
+        real_slug = f"cap-resolved-{uuid4().hex[:6]}"
+        archive = _make_tar(
+            {f"repo-main/skills/{real_slug}/SKILL.md": _skill_md("Real", "r")}
+        )
+        monkeypatch.setattr(
+            "onyx.server.features.skill.api.fetch_repo_archive",
+            lambda _source: archive,
+        )
+        monkeypatch.setattr(
+            "onyx.server.features.skill.api.MAX_PERSONAL_SKILLS_PER_USER", 1
+        )
+        request.addfinalizer(lambda: _delete_skills_by_slugs([real_slug]))
+
+        missing_slug = f"does-not-exist-{uuid4().hex[:6]}"
+        result = _install_personal_repo_skills(
+            "owner/repo", [real_slug, missing_slug], test_user, db_session
+        )
+
+        assert [s.slug for s in result.created] == [real_slug]
+        assert len(result.failures) == 1
+        assert result.failures[0].slug == missing_slug
+
     def test_slug_not_in_repo_is_failure_entry(
         self,
         db_session: Session,

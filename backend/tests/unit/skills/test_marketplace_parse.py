@@ -96,6 +96,30 @@ from onyx.skills.marketplace import ParsedSource
                 skill_filters=[],
             ),
         ),
+        # GitLab subgroups: the project path before "-" may be nested, so the
+        # owner namespace keeps every segment except the final repo name.
+        (
+            "https://gitlab.com/group/subgroup/r/-/tree/main/skills/foo",
+            ParsedSource(
+                host="gitlab.com",
+                owner="group/subgroup",
+                repo="r",
+                ref="main",
+                subpath="skills/foo",
+                skill_filters=[],
+            ),
+        ),
+        (
+            "https://gitlab.com/group/sub1/sub2/r/-/tree/dev",
+            ParsedSource(
+                host="gitlab.com",
+                owner="group/sub1/sub2",
+                repo="r",
+                ref="dev",
+                subpath=None,
+                skill_filters=[],
+            ),
+        ),
     ],
 )
 def test_parse_skill_source_ok(raw: str, expected: ParsedSource) -> None:

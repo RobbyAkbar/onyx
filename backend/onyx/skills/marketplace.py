@@ -192,18 +192,32 @@ def _parse_url_source(url: str, skill_filters: list[str]) -> ParsedSource:
             f"cannot extract owner and repo from URL '{url}'",
         )
 
-    owner = path_parts[0]
-    repo = path_parts[1].removesuffix(".git")
     ref: str | None = None
     subpath: str | None = None
 
-    # Tree/ref form: GitHub /owner/repo/tree/<ref>[/<subpath>...] and GitLab
-    # /owner/repo/-/tree/<ref>[/<subpath>...] (GitLab inserts a "-" separator
-    # before tree/blob). A slash-containing ref is not disambiguated from the
+    # GitLab inserts a "-" separator between the project path and tree/blob/...
+    # The project path may be nested through subgroups
+    # (group/subgroup/.../repo), so everything before "-" is the project path:
+    # all but the last segment is the owner namespace, the last is the repo.
+    if host == "gitlab.com" and "-" in path_parts:
+        sep = path_parts.index("-")
+        project_parts = path_parts[:sep]
+        if len(project_parts) < 2:
+            raise OnyxError(
+                OnyxErrorCode.INVALID_INPUT,
+                f"cannot extract owner and repo from URL '{url}'",
+            )
+        owner = "/".join(project_parts[:-1])
+        repo = project_parts[-1].removesuffix(".git")
+        rest = path_parts[sep + 1 :]
+    else:
+        owner = path_parts[0]
+        repo = path_parts[1].removesuffix(".git")
+        rest = path_parts[2:]
+
+    # Tree/ref form: /tree/<ref>[/<subpath>...] (after the host-specific prefix
+    # handling above). A slash-containing ref is not disambiguated from the
     # subpath — the first segment after tree is taken as the ref.
-    rest = path_parts[2:]
-    if rest and rest[0] == "-":
-        rest = rest[1:]
     if rest and rest[0] == "tree":
         if len(rest) < 2:
             raise OnyxError(
@@ -499,11 +513,12 @@ def _discover_skills_in_dir(
     # Flat: skills/*/SKILL.md
     skills_base = search_root / "skills"
     if skills_base.is_dir():
-        for d in sorted(skills_base.iterdir()):
+        skills_children = sorted(skills_base.iterdir())
+        for d in skills_children:
             if d.is_dir() and not d.name.startswith("."):
                 _add(d)
         # Catalog: skills/*/*/SKILL.md
-        for d in sorted(skills_base.iterdir()):
+        for d in skills_children:
             if d.is_dir() and not d.name.startswith("."):
                 for sub in sorted(d.iterdir()):
                     if sub.is_dir():
