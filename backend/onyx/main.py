@@ -159,6 +159,7 @@ from onyx.server.saml_multi import router as saml_multi_router
 from onyx.server.security.api import admin_router as security_admin_router
 from onyx.server.settings.api import admin_router as settings_admin_router
 from onyx.server.settings.api import basic_router as settings_router
+from onyx.server.sso.api import router as sso_router
 from onyx.server.token_rate_limits.api import router as token_rate_limit_settings_router
 from onyx.server.utils import BasicAuthenticationError
 from onyx.setup import setup_multitenant_onyx
@@ -555,6 +556,7 @@ def get_application(lifespan_override: Lifespan | None = None) -> FastAPI:
     include_router_with_global_prefix_prepended(application, settings_admin_router)
     include_router_with_global_prefix_prepended(application, security_admin_router)
     include_router_with_global_prefix_prepended(application, sso_admin_router)
+    include_router_with_global_prefix_prepended(application, sso_router)
     include_router_with_global_prefix_prepended(application, llm_admin_router)
     include_router_with_global_prefix_prepended(application, kg_admin_router)
     include_router_with_global_prefix_prepended(application, llm_router)
