@@ -3,10 +3,10 @@
 Access model:
 - `VIEW` is the skills UI/read API policy. It excludes external-app-backed rows,
   applies user visibility, and lets admins view all non-external-app rows.
-- `EDIT` is the custom-skill mutation policy. It excludes external-app-backed
+- `EDIT` is the skill mutation policy. It excludes external-app-backed
   and built-in rows, and only returns rows the user can modify.
 - `USE` is the runtime/sandbox policy. It applies user visibility without an
-  admin bypass, requires enabled rows, includes authenticated external-app-backed
+  admin bypass, requires enabled rows, includes available external-app-backed
   rows, and hides unavailable built-ins.
 
 Delete is a hard delete — `delete_skill` removes the row and returns its
@@ -30,7 +30,6 @@ from sqlalchemy import exists
 from sqlalchemy import or_
 from sqlalchemy import Select
 from sqlalchemy import select
-from sqlalchemy import true
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm import Session
@@ -62,14 +61,7 @@ class SkillAccessPolicy(str, Enum):
     USE = "use"
 
 
-def _is_skill_author_clause(user: User) -> ColumnElement[bool]:
-    return and_(
-        Skill.author_user_id == user.id,
-        Skill.built_in_skill_id.is_(None),
-    )
-
-
-def _user_share_exists(
+def _is_shared_with_user(
     user: User,
     permission: SkillSharePermission | None = None,
 ) -> ColumnElement[bool]:
@@ -83,7 +75,7 @@ def _user_share_exists(
     return stmt.exists()
 
 
-def _group_share_exists(
+def _is_shared_with_user_group(
     user: User,
     permission: SkillSharePermission | None = None,
 ) -> ColumnElement[bool]:
@@ -101,23 +93,12 @@ def _group_share_exists(
     return stmt.exists()
 
 
-def _any_share_exists() -> ColumnElement[bool]:
-    user_share_exists = (
-        select(Skill__User.skill_id).where(Skill__User.skill_id == Skill.id).exists()
-    )
-    group_share_exists = (
-        select(Skill__UserGroup.skill_id)
-        .where(Skill__UserGroup.skill_id == Skill.id)
-        .exists()
-    )
-    return or_(user_share_exists, group_share_exists)
-
-
-def _curator_group_management_clause(user: User) -> ColumnElement[bool]:
-    scoped_group_ids = select(User__UserGroup.user_group_id).where(
+def _is_group_shared_only_with_curator_scope(user: User) -> ColumnElement[bool]:
+    """Curators can manage skills only when all group shares are in their scope."""
+    curator_scope_group_ids = select(User__UserGroup.user_group_id).where(
         User__UserGroup.user_id == user.id
     )
-    scoped_group_share_exists = (
+    share_in_curator_scope_exists = (
         select(Skill__UserGroup.skill_id)
         .join(
             User__UserGroup,
@@ -128,61 +109,22 @@ def _curator_group_management_clause(user: User) -> ColumnElement[bool]:
     )
 
     if user.role == UserRole.CURATOR:
-        scoped_group_ids = scoped_group_ids.where(User__UserGroup.is_curator.is_(True))
-        scoped_group_share_exists = scoped_group_share_exists.where(
+        curator_scope_group_ids = curator_scope_group_ids.where(
+            User__UserGroup.is_curator.is_(True)
+        )
+        share_in_curator_scope_exists = share_in_curator_scope_exists.where(
             User__UserGroup.is_curator.is_(True)
         )
 
     no_group_share_outside_scope = ~exists().where(
         Skill__UserGroup.skill_id == Skill.id
-    ).where(Skill__UserGroup.user_group_id.notin_(scoped_group_ids)).correlate(Skill)
-    return and_(scoped_group_share_exists.exists(), no_group_share_outside_scope)
-
-
-def _user_view_clause(user: User, *, admin_bypass: bool) -> ColumnElement[bool]:
-    if admin_bypass and user.role == UserRole.ADMIN:
-        return true()
-
-    return or_(
-        Skill.is_public.is_(True),
-        _user_share_exists(user),
-        _group_share_exists(user),
-        _is_skill_author_clause(user),
+    ).where(Skill__UserGroup.user_group_id.notin_(curator_scope_group_ids)).correlate(
+        Skill
     )
+    return and_(share_in_curator_scope_exists.exists(), no_group_share_outside_scope)
 
 
-def _user_edit_clause(user: User) -> ColumnElement[bool]:
-    editor_share_clause = or_(
-        _user_share_exists(user, SkillSharePermission.EDITOR),
-        _group_share_exists(user, SkillSharePermission.EDITOR),
-        and_(
-            Skill.is_public.is_(True),
-            Skill.public_permission == SkillSharePermission.EDITOR,
-        ),
-    )
-
-    if user.role == UserRole.ADMIN:
-        return or_(
-            _is_skill_author_clause(user),
-            editor_share_clause,
-            Skill.is_public.is_(True),
-            _any_share_exists(),
-        )
-
-    if user.role in (UserRole.CURATOR, UserRole.GLOBAL_CURATOR):
-        return or_(
-            _is_skill_author_clause(user),
-            editor_share_clause,
-            _curator_group_management_clause(user),
-        )
-
-    return or_(
-        _is_skill_author_clause(user),
-        editor_share_clause,
-    )
-
-
-def _exclude_unavailable_built_ins(
+def _exclude_unavailable_built_in_skills(
     stmt: Select[tuple[Skill]], db_session: Session
 ) -> Select[tuple[Skill]]:
     """Hide built-ins whose codified ``is_available(db)`` returns False.
@@ -202,16 +144,14 @@ def _exclude_unavailable_built_ins(
     )
 
 
-def _skill_ids_blocked_by_external_app_auth(
+def _external_app_skill_ids_available_to_user(
     user: User, db_session: Session
 ) -> list[UUID]:
-    """Skill ids to withhold from *user*'s sandbox: external-app-backed
-    skills the user has not authenticated for.
+    """External-app-backed skill ids this user may load into their sandbox.
 
     Each external app is left-joined to this user's credential row; an app
-    the user can't use yet (missing required credential keys) has its skill
-    blocked. Apps that need no per-user credentials, or that the user has
-    already configured, are not blocked.
+    is available when it needs no per-user credentials, or when the user has
+    already configured every required credential key.
     """
     rows = db_session.execute(
         select(ExternalApp, ExternalAppUserCredential).join(
@@ -226,11 +166,11 @@ def _skill_ids_blocked_by_external_app_auth(
     return [
         app.skill_id
         for app, user_cred in rows
-        if not is_user_authenticated_for_app(app, user_cred)
+        if is_user_authenticated_for_app(app, user_cred)
     ]
 
 
-def _skill_select(*, order_by_name: bool) -> Select[tuple[Skill]]:
+def _skill_select_with_eager_load(*, order_by_name: bool) -> Select[tuple[Skill]]:
     stmt = select(Skill).options(
         selectinload(Skill.author),
         selectinload(Skill.user_shares).selectinload(Skill__User.user),
@@ -248,33 +188,74 @@ def _skill_select_for_access_policy(
     user: User,
     order_by_name: bool,
 ) -> Select[tuple[Skill]]:
-    stmt = _skill_select(order_by_name=order_by_name)
+    stmt = _skill_select_with_eager_load(order_by_name=order_by_name).outerjoin(
+        ExternalApp,
+        ExternalApp.skill_id == Skill.id,
+    )
+    owned_by_user = and_(
+        Skill.author_user_id == user.id,
+        Skill.built_in_skill_id.is_(None),
+    )
+    visible_to_user = or_(
+        Skill.is_public.is_(True),
+        _is_shared_with_user(user),
+        _is_shared_with_user_group(user),
+        owned_by_user,
+    )
+    editable_by_user = or_(
+        owned_by_user,
+        _is_shared_with_user(user, SkillSharePermission.EDITOR),
+        _is_shared_with_user_group(user, SkillSharePermission.EDITOR),
+        and_(
+            Skill.is_public.is_(True),
+            Skill.public_permission == SkillSharePermission.EDITOR,
+        ),
+    )
 
-    match policy:
-        case SkillAccessPolicy.VIEW:
-            stmt = stmt.where(Skill.id.notin_(select(ExternalApp.skill_id)))
-            stmt = stmt.where(_user_view_clause(user, admin_bypass=True))
-            if user.role == UserRole.ADMIN:
-                return stmt
-            stmt = stmt.where(or_(Skill.enabled.is_(True), _user_edit_clause(user)))
-            return _exclude_unavailable_built_ins(stmt, db_session)
+    if user.role in (UserRole.CURATOR, UserRole.GLOBAL_CURATOR):
+        editable_by_user = or_(
+            editable_by_user,
+            _is_group_shared_only_with_curator_scope(user),
+        )
 
-        case SkillAccessPolicy.EDIT:
-            return (
-                stmt.where(Skill.id.notin_(select(ExternalApp.skill_id)))
-                .where(Skill.built_in_skill_id.is_(None))
-                .where(_user_edit_clause(user))
-            )
+    if policy == SkillAccessPolicy.VIEW:
+        stmt = stmt.where(ExternalApp.id.is_(None))
+        if user.role == UserRole.ADMIN:
+            return stmt
+        stmt = stmt.where(
+            visible_to_user,
+            or_(Skill.enabled.is_(True), editable_by_user),
+        )
+        return _exclude_unavailable_built_in_skills(
+            stmt,
+            db_session=db_session,
+        )
 
-        case SkillAccessPolicy.USE:
-            blocked_skill_ids = _skill_ids_blocked_by_external_app_auth(
-                user, db_session
-            )
-            stmt = stmt.where(Skill.enabled.is_(True)).where(
-                Skill.id.notin_(blocked_skill_ids)
-            )
-            stmt = stmt.where(_user_view_clause(user, admin_bypass=False))
-            return _exclude_unavailable_built_ins(stmt, db_session)
+    if policy == SkillAccessPolicy.EDIT:
+        stmt = stmt.where(
+            ExternalApp.id.is_(None),
+            Skill.built_in_skill_id.is_(None),
+        )
+        if user.role == UserRole.ADMIN:
+            return stmt
+        return stmt.where(editable_by_user)
+
+    if policy == SkillAccessPolicy.USE:
+        available_external_app_skill_ids = _external_app_skill_ids_available_to_user(
+            user, db_session
+        )
+        # Non-external-app skills are always available; external-app skills
+        # need credentials from the user to be available
+        available_in_sandbox = or_(
+            ExternalApp.id.is_(None),
+            Skill.id.in_(available_external_app_skill_ids),
+        )
+        stmt = stmt.where(
+            Skill.enabled.is_(True),
+            available_in_sandbox,
+            visible_to_user,
+        )
+        return _exclude_unavailable_built_in_skills(stmt, db_session)
 
     raise ValueError(f"Unknown skill access policy: {policy}")
 
@@ -288,7 +269,17 @@ def visible_skill_ids_for_user(user: User, db_session: Session) -> set[UUID]:
     stmt = (
         select(Skill.id)
         .where(Skill.enabled.is_(True))
-        .where(_user_view_clause(user, admin_bypass=False))
+        .where(
+            or_(
+                Skill.is_public.is_(True),
+                _is_shared_with_user(user),
+                _is_shared_with_user_group(user),
+                and_(
+                    Skill.author_user_id == user.id,
+                    Skill.built_in_skill_id.is_(None),
+                ),
+            )
+        )
     )
     return set(db_session.scalars(stmt))
 
@@ -377,7 +368,9 @@ def fetch_skill_by_id_for_system(skill_id: UUID, db_session: Session) -> Skill |
     Only use this for system flows that have already made an authorization
     decision, such as post-commit reloads or sandbox invalidation.
     """
-    stmt = _skill_select(order_by_name=False).where(Skill.id == skill_id)
+    stmt = _skill_select_with_eager_load(order_by_name=False).where(
+        Skill.id == skill_id
+    )
     return db_session.scalars(stmt).one_or_none()
 
 
@@ -486,7 +479,7 @@ def replace_skill_bundle(
     new_description: str,
     db_session: Session,
 ) -> str:
-    """Swap a custom skill's bundle blob and refresh its display metadata.
+    """Swap a skill's bundle blob and refresh its display metadata.
 
     Returns the old bundle file id so the caller can delete the old blob from
     FileStore after the transaction commits.
