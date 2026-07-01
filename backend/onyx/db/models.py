@@ -657,6 +657,8 @@ class Skill__User(Base):
 
     user: Mapped["User"] = relationship("User")
 
+    __table_args__ = (Index("ix_skill__user_user_id", "user_id"),)
+
 
 class DocumentSet__User(Base):
     __tablename__ = "document_set__user"
@@ -4317,12 +4319,9 @@ class Skill(Base):
         ForeignKey("user.id", ondelete="SET NULL"),
         nullable=True,
     )
-    is_public: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    public_permission: Mapped[SkillSharePermission] = mapped_column(
+    public_permission: Mapped[SkillSharePermission | None] = mapped_column(
         Enum(SkillSharePermission, native_enum=False),
-        nullable=False,
-        default=SkillSharePermission.VIEWER,
-        server_default=SkillSharePermission.VIEWER.value,
+        nullable=True,
     )
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

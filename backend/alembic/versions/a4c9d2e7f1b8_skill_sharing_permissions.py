@@ -23,10 +23,10 @@ def upgrade() -> None:
         sa.Column(
             "public_permission",
             sa.String(),
-            nullable=False,
-            server_default="VIEWER",
+            nullable=True,
         ),
     )
+    op.drop_column("skill", "is_public")
     op.add_column(
         "skill__user_group",
         sa.Column("permission", sa.String(), nullable=False, server_default="VIEWER"),
@@ -48,9 +48,15 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("skill_id", "user_id"),
     )
+    op.create_index("ix_skill__user_user_id", "skill__user", ["user_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_skill__user_user_id", table_name="skill__user")
     op.drop_table("skill__user")
     op.drop_column("skill__user_group", "permission")
+    op.add_column(
+        "skill",
+        sa.Column("is_public", sa.Boolean(), nullable=False, server_default=sa.false()),
+    )
     op.drop_column("skill", "public_permission")

@@ -10,6 +10,7 @@ from onyx.db.models import UserRole
 from onyx.db.skill import fetch_skill
 from onyx.db.skill import list_skills
 from onyx.db.skill import SkillAccessPolicy
+from onyx.db.skill import update_skill_fields
 from tests.external_dependency_unit.craft.db_helpers import add_user_to_group
 from tests.external_dependency_unit.craft.db_helpers import make_group
 from tests.external_dependency_unit.craft.db_helpers import make_skill
@@ -177,6 +178,204 @@ class TestSkillVisibility:
 
         assert result is not None
         assert result.id == private_skill.id
+
+    def test_group_viewer_share_does_not_grant_edit(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        user = make_user(db_session, role=UserRole.BASIC)
+        group = make_group(db_session)
+        add_user_to_group(db_session, user, group)
+        private_skill = make_skill(db_session, is_public=False, enabled=True)
+        share_skill_with_group(
+            db_session,
+            private_skill,
+            group,
+            SkillSharePermission.VIEWER,
+        )
+
+        result = fetch_skill(
+            private_skill.id,
+            policy=SkillAccessPolicy.EDIT,
+            user=user,
+            db_session=db_session,
+        )
+
+        assert result is None
+
+    def test_group_editor_share_grants_edit(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        user = make_user(db_session, role=UserRole.BASIC)
+        group = make_group(db_session)
+        add_user_to_group(db_session, user, group)
+        private_skill = make_skill(db_session, is_public=False, enabled=True)
+        share_skill_with_group(
+            db_session,
+            private_skill,
+            group,
+            SkillSharePermission.EDITOR,
+        )
+
+        result = fetch_skill(
+            private_skill.id,
+            policy=SkillAccessPolicy.EDIT,
+            user=user,
+            db_session=db_session,
+        )
+
+        assert result is not None
+        assert result.id == private_skill.id
+
+    def test_org_viewer_permission_does_not_grant_edit(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        user = make_user(db_session, role=UserRole.BASIC)
+        public_skill = make_skill(
+            db_session,
+            is_public=True,
+            public_permission=SkillSharePermission.VIEWER,
+            enabled=True,
+        )
+
+        result = fetch_skill(
+            public_skill.id,
+            policy=SkillAccessPolicy.EDIT,
+            user=user,
+            db_session=db_session,
+        )
+
+        assert result is None
+
+    def test_org_editor_permission_grants_edit(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        user = make_user(db_session, role=UserRole.BASIC)
+        public_skill = make_skill(
+            db_session,
+            is_public=True,
+            public_permission=SkillSharePermission.EDITOR,
+            enabled=True,
+        )
+
+        result = fetch_skill(
+            public_skill.id,
+            policy=SkillAccessPolicy.EDIT,
+            user=user,
+            db_session=db_session,
+        )
+
+        assert result is not None
+        assert result.id == public_skill.id
+
+    def test_admin_edit_fetch_allows_personal_disabled_skill(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        admin = make_user(db_session, role=UserRole.ADMIN)
+        private_disabled_skill = make_skill(
+            db_session,
+            is_public=False,
+            enabled=False,
+        )
+
+        result = fetch_skill(
+            private_disabled_skill.id,
+            policy=SkillAccessPolicy.EDIT,
+            user=admin,
+            db_session=db_session,
+        )
+
+        assert result is not None
+        assert result.id == private_disabled_skill.id
+
+    def test_disabled_skill_visible_to_editor_share_but_not_viewer_share(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        viewer = make_user(db_session, role=UserRole.BASIC)
+        editor = make_user(db_session, role=UserRole.BASIC)
+        disabled_skill = make_skill(db_session, is_public=False, enabled=False)
+        share_skill_with_user(
+            db_session,
+            disabled_skill,
+            viewer,
+            SkillSharePermission.VIEWER,
+        )
+        share_skill_with_user(
+            db_session,
+            disabled_skill,
+            editor,
+            SkillSharePermission.EDITOR,
+        )
+
+        viewer_result = fetch_skill(
+            disabled_skill.id,
+            policy=SkillAccessPolicy.VIEW,
+            user=viewer,
+            db_session=db_session,
+        )
+        editor_result = fetch_skill(
+            disabled_skill.id,
+            policy=SkillAccessPolicy.VIEW,
+            user=editor,
+            db_session=db_session,
+        )
+
+        assert viewer_result is None
+        assert editor_result is not None
+        assert editor_result.id == disabled_skill.id
+
+    def test_public_permission_null_controls_org_visibility(
+        self,
+        db_session: Session,
+        test_user: User,  # noqa: ARG002
+    ) -> None:
+        user = make_user(db_session, role=UserRole.BASIC)
+        skill = make_skill(db_session, is_public=False, enabled=True)
+        assert (
+            fetch_skill(
+                skill.id,
+                policy=SkillAccessPolicy.VIEW,
+                user=user,
+                db_session=db_session,
+            )
+            is None
+        )
+
+        update_skill_fields(
+            skill=skill,
+            public_permission=SkillSharePermission.EDITOR,
+            db_session=db_session,
+        )
+        editor_result = fetch_skill(
+            skill.id,
+            policy=SkillAccessPolicy.EDIT,
+            user=user,
+            db_session=db_session,
+        )
+        assert editor_result is not None
+        assert editor_result.id == skill.id
+
+        update_skill_fields(skill=skill, is_public=False, db_session=db_session)
+        assert (
+            fetch_skill(
+                skill.id,
+                policy=SkillAccessPolicy.VIEW,
+                user=user,
+                db_session=db_session,
+            )
+            is None
+        )
 
     def test_user_loses_skill_after_group_removal(
         self,

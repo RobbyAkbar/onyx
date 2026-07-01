@@ -129,6 +129,7 @@ def make_skill(
     *,
     slug: str | None = None,
     is_public: bool = False,
+    public_permission: SkillSharePermission = SkillSharePermission.VIEWER,
     enabled: bool = True,
 ) -> Skill:
     """Create a single custom ``Skill`` row.
@@ -144,7 +145,7 @@ def make_skill(
         description="d",
         bundle_file_id=f"bundle-{uuid4().hex[:8]}",
         bundle_sha256="0" * 64,
-        is_public=is_public,
+        public_permission=public_permission if is_public else None,
         enabled=enabled,
     )
     db_session.add(skill)
@@ -175,7 +176,7 @@ def make_built_in_skill_row(
         built_in_skill_id=built_in_skill_id,
         bundle_file_id=None,
         bundle_sha256=None,
-        is_public=is_public,
+        public_permission=SkillSharePermission.VIEWER if is_public else None,
         enabled=enabled,
     )
     db_session.add(skill)

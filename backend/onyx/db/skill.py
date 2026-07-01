@@ -170,6 +170,21 @@ def _external_app_skill_ids_available_to_user(
     ]
 
 
+def _public_permission_for_update(
+    *,
+    current_permission: SkillSharePermission | None,
+    is_public: bool | None,
+    public_permission: SkillSharePermission | None,
+) -> SkillSharePermission | None:
+    if is_public is False:
+        return None
+    if public_permission is not None:
+        return public_permission
+    if is_public is True:
+        return current_permission or SkillSharePermission.VIEWER
+    return current_permission
+
+
 def _skill_select_with_eager_load(*, order_by_name: bool) -> Select[tuple[Skill]]:
     stmt = select(Skill).options(
         selectinload(Skill.author),
@@ -197,7 +212,7 @@ def _skill_select_for_access_policy(
         Skill.built_in_skill_id.is_(None),
     )
     visible_to_user = or_(
-        Skill.is_public.is_(True),
+        Skill.public_permission.isnot(None),
         _is_shared_with_user(user),
         _is_shared_with_user_group(user),
         owned_by_user,
@@ -206,10 +221,7 @@ def _skill_select_for_access_policy(
         owned_by_user,
         _is_shared_with_user(user, SkillSharePermission.EDITOR),
         _is_shared_with_user_group(user, SkillSharePermission.EDITOR),
-        and_(
-            Skill.is_public.is_(True),
-            Skill.public_permission == SkillSharePermission.EDITOR,
-        ),
+        Skill.public_permission == SkillSharePermission.EDITOR,
     )
 
     if user.role in (UserRole.CURATOR, UserRole.GLOBAL_CURATOR):
@@ -271,7 +283,7 @@ def visible_skill_ids_for_user(user: User, db_session: Session) -> set[UUID]:
         .where(Skill.enabled.is_(True))
         .where(
             or_(
-                Skill.is_public.is_(True),
+                Skill.public_permission.isnot(None),
                 _is_shared_with_user(user),
                 _is_shared_with_user_group(user),
                 and_(
@@ -290,7 +302,7 @@ def affected_user_ids_for_skill(skill: Skill, db_session: Session) -> set[UUID]:
     Deliberately does not filter by ``enabled``: disable/delete flows still need
     the previous recipients so the push pipeline can remove the skill files.
     """
-    if skill.is_public:
+    if skill.public_permission is not None:
         stmt = select(Sandbox.user_id).where(Sandbox.status == SandboxStatus.RUNNING)
         return set(db_session.scalars(stmt))
 
@@ -408,7 +420,7 @@ def create_skill__no_commit(
     bundle_file_id: str,
     bundle_sha256: str,
     is_public: bool,
-    public_permission: SkillSharePermission = SkillSharePermission.VIEWER,
+    public_permission: SkillSharePermission | None = None,
     author_user_id: UUID | None,
     db_session: Session,
 ) -> Skill:
@@ -418,8 +430,11 @@ def create_skill__no_commit(
         description=description,
         bundle_file_id=bundle_file_id,
         bundle_sha256=bundle_sha256,
-        is_public=is_public,
-        public_permission=public_permission,
+        public_permission=_public_permission_for_update(
+            current_permission=None,
+            is_public=is_public,
+            public_permission=public_permission,
+        ),
         author_user_id=author_user_id,
         enabled=True,
     )
@@ -438,7 +453,7 @@ def create_built_in_skill_row__no_commit(
     is_public: bool,
     enabled: bool,
     author_user_id: UUID | None = None,
-    public_permission: SkillSharePermission = SkillSharePermission.VIEWER,
+    public_permission: SkillSharePermission | None = None,
     db_session: Session,
 ) -> Skill:
     """Create a built-in-style ``Skill`` row: ``built_in_skill_id`` set,
@@ -458,8 +473,11 @@ def create_built_in_skill_row__no_commit(
         built_in_skill_id=built_in_skill_id,
         bundle_file_id=None,
         bundle_sha256=None,
-        is_public=is_public,
-        public_permission=public_permission,
+        public_permission=_public_permission_for_update(
+            current_permission=None,
+            is_public=is_public,
+            public_permission=public_permission,
+        ),
         author_user_id=author_user_id,
         enabled=enabled,
     )
@@ -520,10 +538,12 @@ def update_skill_fields(
     public_permission: SkillSharePermission | None = None,
     enabled: bool | None = None,
 ) -> Skill:
-    if is_public is not None:
-        skill.is_public = is_public
-    if public_permission is not None:
-        skill.public_permission = public_permission
+    if is_public is not None or public_permission is not None:
+        skill.public_permission = _public_permission_for_update(
+            current_permission=skill.public_permission,
+            is_public=is_public,
+            public_permission=public_permission,
+        )
     if enabled is not None:
         skill.enabled = enabled
     db_session.flush()
