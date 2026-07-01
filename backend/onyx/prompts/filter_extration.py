@@ -9,63 +9,64 @@ SOURCES_KEY = "sources"
 # times fall out naturally.
 # Filled with: {current_day_time_str}, {conversation_history}, {last_user_query}.
 TIME_SCOPE_DECISION_PROMPT = """
-You detect the time filter an internal search should be restricted to, from the user's \
-conversation. When the conversation EXPLICITLY refers to a time, set a time filter on each \
-document's last-updated date; when it refers to no time, set no time filter — (None, None), \
-searching across all time. You filter only by time — other scoping is handled by other \
-systems.
-
-A time filter is a pair (start, end): start is an inclusive lower bound and end an inclusive \
-upper bound on the last-updated date. Either bound is a date or None (no bound on that side). \
-Today is {current_day_time_str}; resolve every time the user refers to against today, into \
-concrete dates yourself.
+You scope an internal search to a time filter, from the user's conversation. When the \
+conversation EXPLICITLY refers to a time the documents should fall within, set a filter on \
+each document's last-updated date; when it refers to none, return (None, None) (search \
+across all time). You scope only by time.
 
 ## Guidance
 
-Set a time filter only when the user EXPLICITLY refers to a time — "last week", "since \
-March", "in January", "between Q1 and Q2", "on the 25th of March", "documents from 2022". \
-NEVER infer a time from the topic alone. When the user refers to no time, set (None, None).
+Set a time filter when a time is EXPLICITLY referenced — in the latest message, or in an \
+earlier turn it continues. NEVER infer a time from the topic alone. A date that names the \
+subject or title of the document sought ("the 2020 GDPR docs", "the FY21 plan") is NOT a \
+filter — it says WHAT the document is, not WHEN it was updated; let content search match it. \
+If no time is referenced, return (None, None).
 
-When the user DOES refer to a time, the phrasing decides the bounds:
+When a time IS referenced, the phrasing decides the bounds:
 
-- LOWER BOUND ONLY — an open-ended time toward the present ("since March", "in the last 3 \
-months", "after 2023"). Set start; leave end None.
+- LOWER BOUND ONLY — an open-ended time toward now, including a rolling window ("since \
+March", "in the last 2 weeks", "recently"). Set start; leave end None — a rolling window has \
+no upper bound, so do NOT set end to today.
 
 - UPPER BOUND ONLY — an open-ended time toward the past ("before 2023", "older than \
 January"). Set end; leave start None.
 
-- BOTH BOUNDS — a named or bounded time. Set start and end to its first and last day. \
-"last January" → start its January 1st, end its January 31st. "Q1 2025" → start 2025-01-01, \
-end 2025-03-31. "last quarter", "in 2022", "between March and June" all behave this way. A \
-single day ("on the 25th of March", "March 25 2024") sets start and end to the same day.
+- BOTH BOUNDS — a completed, named calendar period ("last January", "Q1 2025", "in 2022", \
+"between March and June", or a single day like "March 25 2024"). Set start and end to its \
+first and last day.
 
-- NO BOUND — a vague preference for fresh results with no time ("the latest", "most \
-recent"). Set both start and end to None.
+- NO BOUND — a vague preference for fresh results with no actual time ("the latest", "most \
+recent"). Return (None, None).
 
 ## Conversation history
 
 {conversation_history}
 
+## Current date
+
+Today is {current_day_time_str}. Resolve every time the user refers to against today, into \
+concrete dates yourself.
+
 ## Guidance reminder
 
-Set a time filter only when the user EXPLICITLY refers to a time; NEVER infer a time from \
-the topic alone, and set (None, None) when the user refers to no time. An open-ended time \
-sets one bound and leaves the other None. A named or bounded time sets both bounds. A vague \
-preference for fresh results sets (None, None).
+LOWER / UPPER BOUND: an open-ended time sets one bound and leaves the other None — a rolling \
+window up to now ("the last 2 weeks") leaves end None, not today.
+BOTH BOUNDS: a completed, named calendar period ("last quarter", "in 2022") sets both bounds.
+NEVER filter on a date that names the document's subject/title, and return (None, None) when \
+no time is referenced.
 
 ## Output format
 
 Output ONLY the time filter as a pair: (start, end)
-- start is the lower bound and end is the upper bound, each a date as "YYYY-MM-DD" or None.
-- Both bounds are inclusive; None means no bound on that side.
+- start (lower bound) and end (upper bound) are each a date "YYYY-MM-DD" or None; both are \
+inclusive, and None means no bound on that side.
 
 Examples:
-- "since March 2025" → (2025-03-01, None)
+- "in the last 2 weeks" (today is 2026-06-30) → (2026-06-16, None)
 - "before 2023" → (None, 2022-12-31)
 - "in January 2025" → (2025-01-01, 2025-01-31)
-- "on March 25, 2024" → (2024-03-25, 2024-03-25)
-- "the latest billing docs" → (None, None)
-- "how do I configure SSO?" → (None, None)
+- "the 2020 GDPR docs" → (None, None)
+- "the latest updates" → (None, None)
 
 Do not include any formatting, explanations, or other text aside from the pair.
 
