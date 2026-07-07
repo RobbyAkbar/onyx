@@ -67,3 +67,6 @@ plans/
 .claude/scheduled_tasks.lock
 .claude/worktrees/
 !.claude/settings.json
+
+# Ignore all CLAUDE.md files
+**/CLAUDE.md

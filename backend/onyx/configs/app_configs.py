@@ -121,6 +121,12 @@ HIDE_QUERY_HISTORY_FROM_ADMIN_PANEL = (
 # fixes it)
 WEB_DOMAIN = os.environ.get("WEB_DOMAIN") or "http://localhost:3000"
 
+# Base URL the per-user MCP OAuth flow redirects back to. When a downstream app
+# (e.g. Microo.Web) proxies the flow, point this at that app so its callback page
+# completes the exchange under the same identity that initiated the connect.
+# Defaults to WEB_DOMAIN for the native in-Onyx flow.
+MCP_OAUTH_REDIRECT_BASE = os.environ.get("MCP_OAUTH_REDIRECT_BASE") or WEB_DOMAIN
+
 # Surfaced to the web app via /api/settings so analytics can be enabled by env
 # var instead of a NEXT_PUBLIC_POSTHOG_KEY build arg. Client-side project key.
 POSTHOG_API_KEY = os.environ.get("POSTHOG_API_KEY")
