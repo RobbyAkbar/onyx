@@ -36,7 +36,7 @@ from onyx.auth.oauth_token_manager import validate_oauth_endpoint_url
 from onyx.auth.permissions import require_permission
 from onyx.auth.schemas import UserRole
 from onyx.auth.users import current_curator_or_admin_user
-from onyx.configs.app_configs import WEB_DOMAIN
+from onyx.configs.app_configs import MCP_OAUTH_REDIRECT_BASE
 from onyx.db.engine.sql_engine import get_session
 from onyx.db.engine.sql_engine import get_session_with_current_tenant
 from onyx.db.enums import MCPAuthenticationPerformer
@@ -270,7 +270,7 @@ def _build_oauth_admin_config_data(
     client_info = OAuthClientInformationFull(
         client_id=client_id,
         client_secret=client_secret,
-        redirect_uris=[AnyUrl(f"{WEB_DOMAIN}/mcp/oauth/callback")],
+        redirect_uris=[AnyUrl(f"{MCP_OAUTH_REDIRECT_BASE}/mcp/oauth/callback")],
         grant_types=["authorization_code", "refresh_token"],
         response_types=["code"],
         scope=REQUESTED_SCOPE,  # TODO(evan): allow specifying scopes?
@@ -316,7 +316,7 @@ def _build_oauth_admin_config_data_for_update(
 
     merged = existing_client.model_copy(deep=True)
     merged.client_secret = client_secret
-    merged.redirect_uris = [AnyUrl(f"{WEB_DOMAIN}/mcp/oauth/callback")]
+    merged.redirect_uris = [AnyUrl(f"{MCP_OAUTH_REDIRECT_BASE}/mcp/oauth/callback")]
     merged.scope = REQUESTED_SCOPE  # TODO(evan): allow specifying scopes?
     # Heal stale records that were seeded before `_upsert_mcp_server` always
     # set `token_endpoint_auth_method`. The SDK silently omits the client
@@ -612,7 +612,7 @@ def make_oauth_provider(
         server_url=mcp_server.server_url,
         client_metadata=OAuthClientMetadata(
             client_name=f"Onyx - {mcp_server.name}",
-            redirect_uris=[AnyUrl(f"{WEB_DOMAIN}/mcp/oauth/callback")],
+            redirect_uris=[AnyUrl(f"{MCP_OAUTH_REDIRECT_BASE}/mcp/oauth/callback")],
             grant_types=["authorization_code", "refresh_token"],
             response_types=["code"],
             scope=REQUESTED_SCOPE,  # TODO: do we need to pass this in? maybe make configurable
@@ -693,7 +693,9 @@ MCP_OAUTH_CALLBACK_PATH = "/mcp/oauth/callback"
 
 
 def _mcp_oauth_redirect_uri() -> str:
-    return f"{WEB_DOMAIN}{MCP_OAUTH_CALLBACK_PATH}"
+    # MCP_OAUTH_REDIRECT_BASE lets a proxying app (Microo.Web) own the callback so
+    # the exchange completes under the same identity that initiated to connect.
+    return f"{MCP_OAUTH_REDIRECT_BASE}{MCP_OAUTH_CALLBACK_PATH}"
 
 
 def _mcp_known_provider_flow_params(
