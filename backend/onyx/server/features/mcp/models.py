@@ -450,6 +450,11 @@ class MCPServer(BaseModel):
     tool_count: int = Field(
         default=0, description="Number of tools associated with this server"
     )
+    emit_documents: bool = Field(
+        default=False,
+        description="When true, tool results shaped as {'documents': [...]} are "
+        "surfaced as citable documents instead of raw JSON",
+    )
     auth_template: Optional[MCPAuthTemplate] = Field(
         None, description="Authentication template for per-user auth"
     )

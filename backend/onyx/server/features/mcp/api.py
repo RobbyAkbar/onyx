@@ -925,7 +925,7 @@ async def _connect_oauth(
             detail="MCP server transport is not configured",
         )
 
-    # always make a http request for the initial probe
+    # always make an http request for the initial probe
     transport = mcp_server.transport if is_connected else MCPTransport.STREAMABLE_HTTP
     probe_url = mcp_server.server_url
     logger.info("Probing OAuth server at: %s", probe_url)
@@ -939,7 +939,7 @@ async def _connect_oauth(
     )
 
     # start the oauth handshake in the background
-    # the background task will block on the callback handler after setting
+    #  task will block on the callback handler after setting
     # the auth_url for us to send to the frontend. The callback handler waits for
     # the auth code to be available in redis; this code gets set by our callback endpoint
     # which is called by the frontend after the user goes through the login flow.
@@ -1023,7 +1023,7 @@ async def _connect_oauth(
         else:
             saved_e = e
         logger.error("OAuth initialization failed: %s", saved_e)
-        # If initialize failed and we also didn't get an auth URL, surface an error
+        # If initialize failed, and we also didn't get an auth URL, surface an error
         raise HTTPException(
             status_code=400, detail=f"Failed to initialize OAuth client: {str(saved_e)}"
         )
@@ -1550,6 +1550,7 @@ def _db_mcp_server_to_api_mcp_server(
         status=db_server.status,
         last_refreshed_at=db_server.last_refreshed_at,
         tool_count=tool_count,
+        emit_documents=db_server.emit_documents,
         auth_template=auth_template,
         user_credentials=user_credentials,
         admin_credentials=admin_credentials,
@@ -2236,9 +2237,9 @@ def _sync_tools_for_server(
 ) -> int:
     """Toggle enabled state for MCP tools that exist for the server.
     Updates to the db model of a tool all happen when the user Lists Tools.
-    This ensures that the the tools added to the db match what the user sees in the UI,
+    This ensures that the tools added to the db match what the user sees in the UI,
     even if the underlying tool has changed on the server after list tools is called.
-    That's a corner case anyways; the admin should go back and update the server by re-listing tools.
+    That's a corner case anyway; the admin should go back and update the server by re-listing tools.
     """
 
     updated_tools = 0
@@ -2560,6 +2561,7 @@ def create_mcp_server_simple(
         is_authenticated=False,  # Not authenticated yet
         status=mcp_server.status,
         tool_count=0,  # New server, no tools yet
+        emit_documents=mcp_server.emit_documents,
         auth_template=None,
         user_credentials=None,
         admin_credentials=None,
