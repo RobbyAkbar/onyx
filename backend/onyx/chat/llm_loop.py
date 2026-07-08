@@ -60,6 +60,7 @@ from onyx.tools.models import ToolCallKickoff
 from onyx.tools.models import ToolResponse
 from onyx.tools.tool_implementations.images.models import FinalImageGenerationResponse
 from onyx.tools.tool_implementations.memory.models import MemoryToolResponse
+from onyx.tools.tool_implementations.mcp.mcp_tool import MCPTool
 from onyx.tools.tool_implementations.open_url.open_url_tool import OpenURLTool
 from onyx.tools.tool_implementations.python.python_tool import PythonTool
 from onyx.tools.tool_implementations.search.search_tool import SearchTool
@@ -721,6 +722,13 @@ def run_llm_loop(
         ran_image_gen: bool = False
         just_ran_web_search: bool = False
         has_open_url_tool: bool = any(isinstance(tool, OpenURLTool) for tool in tools)
+        # MCP tools opt-in to citable documents; their names are dynamic so they
+        # can't live in CITEABLE_TOOLS_NAMES — track them here for the cite gate.
+        citeable_mcp_tool_names: set[str] = {
+            tool.name
+            for tool in tools
+            if isinstance(tool, MCPTool) and tool.mcp_server.emit_documents
+        }
         has_called_search_tool: bool = False
         code_interpreter_file_generated: bool = False
         fallback_extraction_attempted: bool = False
@@ -1171,6 +1179,7 @@ def run_llm_loop(
 
             if llm_step_result.tool_calls and any(
                 tool.tool_name in CITEABLE_TOOLS_NAMES
+                or tool.tool_name in citeable_mcp_tool_names
                 for tool in llm_step_result.tool_calls
             ):
                 # As long as 1 tool with citeable documents is called at any point, we ask the LLM to try to cite

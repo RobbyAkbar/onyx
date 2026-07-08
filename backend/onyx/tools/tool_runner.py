@@ -13,6 +13,7 @@ from onyx.server.query_and_chat.streaming_models import SectionEnd
 from onyx.tools.interface import Tool
 from onyx.tools.models import ChatFile
 from onyx.tools.models import ChatMinimalTextMessage
+from onyx.tools.models import MCPToolOverrideKwargs
 from onyx.tools.models import OpenURLToolOverrideKwargs
 from onyx.tools.models import ParallelToolCallResponse
 from onyx.tools.models import PythonToolOverrideKwargs
@@ -28,6 +29,7 @@ from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
 from onyx.tools.tool_implementations.coding_agent.coding_agent_tool import (
     CodingAgentToolOverrideKwargs,
 )
+from onyx.tools.tool_implementations.mcp.mcp_tool import MCPTool
 from onyx.tools.tool_implementations.memory.memory_tool import MemoryTool
 from onyx.tools.tool_implementations.memory.memory_tool import MemoryToolOverrideKwargs
 from onyx.tools.tool_implementations.open_url.open_url_tool import OpenURLTool
@@ -348,6 +350,7 @@ def run_tool_calls(
             | PythonToolOverrideKwargs
             | MemoryToolOverrideKwargs
             | CodingAgentToolOverrideKwargs
+            | MCPToolOverrideKwargs
             | None
         ) = None
 
@@ -413,6 +416,13 @@ def run_tool_calls(
                 ),
                 chat_history=minimal_history,
             )
+
+        elif isinstance(tool, MCPTool) and tool.mcp_server.emit_documents:
+            override_kwargs = MCPToolOverrideKwargs(
+                starting_citation_num=starting_citation_num,
+            )
+            # Reserve a citation-number block so parallel tools don't collide.
+            starting_citation_num += 100
 
         tool_run_params.append((tool, tool_call, override_kwargs))
 

@@ -113,6 +113,7 @@ def create_mcp_server__no_commit(
     oauth_scopes_override: list[str] | None = None,
     oauth_additional_auth_params: dict[str, str] | None = None,
     admin_connection_config_id: int | None = None,
+    emit_documents: bool = False,
 ) -> MCPServer:
     """Create a new MCP server"""
     new_server = MCPServer(
@@ -129,6 +130,7 @@ def create_mcp_server__no_commit(
         oauth_scopes_override=oauth_scopes_override,
         oauth_additional_auth_params=oauth_additional_auth_params,
         admin_connection_config_id=admin_connection_config_id,
+        emit_documents=emit_documents,
     )
     db_session.add(new_server)
     db_session.flush()  # Get the ID without committing
@@ -152,6 +154,7 @@ def update_mcp_server__no_commit(
     transport: MCPTransport | None = None,
     status: MCPServerStatus | None = None,
     last_refreshed_at: datetime.datetime | None = None,
+    emit_documents: bool | None = None,
 ) -> MCPServer:
     """Update an existing MCP server"""
     server = get_mcp_server_by_id(server_id, db_session)
@@ -184,6 +187,8 @@ def update_mcp_server__no_commit(
         server.status = status
     if last_refreshed_at is not None:
         server.last_refreshed_at = last_refreshed_at
+    if emit_documents is not None:
+        server.emit_documents = emit_documents
 
     db_session.flush()  # Don't commit yet, let caller decide when to commit
     return server

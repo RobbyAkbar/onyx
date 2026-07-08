@@ -5278,6 +5278,11 @@ class MCPServer(Base):
         nullable=False,
         server_default="CREATED",
     )
+    # When True, tool results shaped as {"documents": [...]} are surfaced as
+    # citable SearchDocs (chip citations + source panel) instead of raw JSON.
+    emit_documents: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # Admin connection config - used for the config page
     # and (when applicable) admin-managed auth
     # and (when applicable) per-user auth
