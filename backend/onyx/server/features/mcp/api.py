@@ -2590,6 +2590,7 @@ def update_mcp_server_simple(
         name=request.name,
         description=request.description,
         server_url=request.server_url,
+        emit_documents=request.emit_documents,
     )
 
     db_session.commit()
