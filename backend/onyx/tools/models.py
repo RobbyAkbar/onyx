@@ -192,6 +192,11 @@ class SearchToolOverrideKwargs(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
+class MCPToolOverrideKwargs(BaseModel):
+    # To know what citation number to start at when an MCP tool emits citable documents
+    starting_citation_num: int
+
+
 class ChatFile(BaseModel):
     """File from a chat session that can be passed to tools."""
 

@@ -281,6 +281,11 @@ class MCPServerSimpleUpdateRequest(BaseModel):
         None, description="Description of the MCP server"
     )
     server_url: Optional[str] = Field(None, description="URL of the MCP server")
+    emit_documents: Optional[bool] = Field(
+        None,
+        description="When true, tool results shaped as {'documents': [...]} are "
+        "surfaced as citable documents instead of raw JSON",
+    )
 
 
 class MCPToolResponse(BaseModel):

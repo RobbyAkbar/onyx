@@ -1,9 +1,13 @@
 import json
+from datetime import datetime
 from typing import Any
 
 from mcp.client.auth import OAuthClientProvider
 
 from onyx.chat.emitter import Emitter
+from onyx.configs.constants import DocumentSource
+from onyx.context.search.models import SearchDoc
+from onyx.context.search.models import SearchDocsResponse
 from onyx.db.enums import MCPAuthenticationType
 from onyx.db.enums import MCPTransport
 from onyx.db.models import MCPConnectionConfig
@@ -14,6 +18,7 @@ from onyx.server.query_and_chat.streaming_models import CustomToolStart
 from onyx.server.query_and_chat.streaming_models import Packet
 from onyx.tools.interface import Tool
 from onyx.tools.models import CustomToolCallSummary
+from onyx.tools.models import MCPToolOverrideKwargs
 from onyx.tools.models import ToolResponse
 from onyx.tools.tool_implementations.mcp.mcp_client import call_mcp_tool
 from onyx.tools.tool_name import sanitize_tool_name
@@ -27,6 +32,11 @@ logger = setup_logger()
 DENYLISTED_MCP_HEADERS = {
     "host",  # Prevents Host Header Injection attacks
 }
+
+# Prefix used for document ids of citable documents surfaced from MCP tool results.
+MCP_DOC_ID_PREFIX = "MICROO_MCP_DOC_"
+# Max characters kept for the source-card preview (blurb) of an MCP document.
+MCP_DOC_BLURB_MAX_CHARS = 400
 
 # TODO: for now we're fitting MCP tool responses into the CustomToolCallSummary class
 # In the future we may want custom handling for MCP tool responses
@@ -47,6 +57,29 @@ def _normalize_parameters_schema(schema: dict[str, Any] | None) -> dict[str, Any
     if schema.get("type", "object") == "object" and "properties" not in schema:
         return {**schema, "type": "object", "properties": {}}
     return schema
+
+
+def _coerce_metadata(value: Any) -> dict[str, str | list[str]]:
+    """Coerce arbitrary MCP metadata into the str/list[str] shape SearchDoc expects."""
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str | list[str]] = {}
+    for k, v in value.items():
+        if isinstance(v, list):
+            result[str(k)] = [str(item) for item in v]
+        else:
+            result[str(k)] = str(v)
+    return result
+
+
+def _parse_updated_at(value: Any) -> datetime | None:
+    """Parse an ISO-8601 timestamp; return None if absent or malformed."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class MCPTool(Tool[None]):
@@ -122,10 +155,115 @@ class MCPTool(Tool[None]):
             )
         )
 
+    def _build_citable_documents_response(
+        self,
+        tool_result: Any,
+        starting_citation_num: int,
+        placement: Placement,
+    ) -> ToolResponse | None:
+        """Surface a document-shaped MCP result as citable SearchDocs.
+
+        Expects the tool result to be (or contain) JSON of the form
+        ``{"documents": [{"id", "title", "content", "url"?, "updated_at"?,
+        "metadata"?}, ...]}``. Returns None when the result is not
+        document-shaped so the caller falls back to the raw JSON path.
+        """
+        if isinstance(tool_result, str):
+            try:
+                parsed = json.loads(tool_result)
+            except (json.JSONDecodeError, ValueError):
+                return None
+        elif isinstance(tool_result, dict):
+            parsed = tool_result
+        else:
+            return None
+
+        if not isinstance(parsed, dict):
+            return None
+        raw_documents = parsed.get("documents")
+        if not isinstance(raw_documents, list) or not raw_documents:
+            return None
+
+        search_docs: list[SearchDoc] = []
+        citation_mapping: dict[int, str] = {}
+        llm_sections: list[str] = []
+        citation_num = starting_citation_num
+
+        for raw in raw_documents:
+            if not isinstance(raw, dict):
+                continue
+            doc_id = raw.get("id")
+            title = raw.get("title")
+            content = raw.get("content")
+            # Required fields; skip malformed entries rather than failing the tool.
+            if not doc_id or not title or content is None:
+                continue
+
+            document_id = f"{MCP_DOC_ID_PREFIX}{doc_id}"
+            url = raw.get("url") or None
+            content_str = str(content)
+
+            search_docs.append(
+                SearchDoc(
+                    document_id=document_id,
+                    chunk_ind=0,
+                    semantic_identifier=str(title),
+                    link=url,
+                    blurb=content_str[:MCP_DOC_BLURB_MAX_CHARS],
+                    source_type=DocumentSource.NOT_APPLICABLE,
+                    boost=0,
+                    hidden=False,
+                    metadata=_coerce_metadata(raw.get("metadata")),
+                    score=None,
+                    match_highlights=[],
+                    updated_at=_parse_updated_at(raw.get("updated_at")),
+                    is_internet=False,
+                )
+            )
+            citation_mapping[citation_num] = document_id
+            llm_sections.append(f"[{citation_num}] {title}\n{content_str}")
+            citation_num += 1
+
+        if not search_docs:
+            return None
+
+        llm_facing_response = "\n\n".join(llm_sections)
+
+        # Light delta so the tool-run card isn't empty; chips + source panel
+        # come from the SearchDocsResponse citation flow, not this packet.
+        self.emitter.emit(
+            Packet(
+                placement=placement,
+                obj=CustomToolDelta(
+                    tool_name=self._name,
+                    response_type="json",
+                    data={
+                        "documents_count": len(search_docs),
+                        "documents": [
+                            {
+                                "title": doc.semantic_identifier,
+                                "url": doc.link or "",
+                            }
+                            for doc in search_docs
+                        ],
+                    },
+                ),
+            )
+        )
+
+        return ToolResponse(
+            rich_response=SearchDocsResponse(
+                search_docs=search_docs,
+                citation_mapping=citation_mapping,
+                displayed_docs=search_docs,
+            ),
+            llm_facing_response=llm_facing_response,
+        )
+
     def run(
         self,
         placement: Placement,
-        override_kwargs: None = None,  # noqa: ARG002
+        override_kwargs: MCPToolOverrideKwargs | None = None,
         **llm_kwargs: Any,
     ) -> ToolResponse:
         """Execute the MCP tool by calling the MCP server"""
@@ -256,6 +394,18 @@ class MCPTool(Tool[None]):
             )
 
             logger.info("MCP tool '%s' executed successfully", self._name)
+
+            # If this server opts in, try to surface the result as citable
+            # documents (chip citations + source panel). Falls back to the
+            # plain custom-tool JSON path when the result isn't document-shaped.
+            if self.mcp_server.emit_documents and override_kwargs is not None:
+                citable_response = self._build_citable_documents_response(
+                    tool_result=tool_result,
+                    starting_citation_num=override_kwargs.starting_citation_num,
+                    placement=placement,
+                )
+                if citable_response is not None:
+                    return citable_response
 
             # Format the tool result for response
             tool_result_dict = {"tool_result": tool_result}
