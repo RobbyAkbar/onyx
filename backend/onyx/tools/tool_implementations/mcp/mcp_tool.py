@@ -221,7 +221,9 @@ class MCPTool(Tool[None]):
                 )
             )
             citation_mapping[citation_num] = document_id
-            llm_sections.append(f"[{citation_num}] {title}\n{content_str}")
+            # Surface the raw `id` so the model can reference this document in
+            # follow-up tool calls (e.g. fetching its summary / full content).
+            llm_sections.append(f"[{citation_num}] {title} (id: {doc_id})\n{content_str}")
             citation_num += 1
 
         if not search_docs:
