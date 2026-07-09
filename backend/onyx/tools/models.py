@@ -195,6 +195,10 @@ class SearchToolOverrideKwargs(BaseModel):
 class MCPToolOverrideKwargs(BaseModel):
     # To know what citation number to start at when an MCP tool emits citable documents
     starting_citation_num: int
+    # Maps an already-cited document_id -> its citation number. Lets a repeated search
+    # in the same turn reuse a document's existing number instead of minting a new one
+    # (which the model then cites as a dangling [N] not present in the final mapping).
+    citation_mapping: dict[str, int] = {}
 
 
 class ChatFile(BaseModel):
