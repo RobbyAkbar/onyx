@@ -16,6 +16,9 @@ from onyx.server.query_and_chat.placement import Placement
 from onyx.server.query_and_chat.streaming_models import CustomToolDelta
 from onyx.server.query_and_chat.streaming_models import CustomToolStart
 from onyx.server.query_and_chat.streaming_models import Packet
+from onyx.server.query_and_chat.streaming_models import SearchToolDocumentsDelta
+from onyx.server.query_and_chat.streaming_models import SearchToolQueriesDelta
+from onyx.server.query_and_chat.streaming_models import SearchToolStart
 from onyx.tools.interface import Tool
 from onyx.tools.models import CustomToolCallSummary
 from onyx.tools.models import MCPToolOverrideKwargs
@@ -148,6 +151,12 @@ class MCPTool(Tool[None]):
         }
 
     def emit_start(self, placement: Placement) -> None:
+        # Citeable servers defer the start packet to run(): only there do we know
+        # whether the result is document-shaped (→ search UI: SearchToolStart) or
+        # not (→ custom-tool UI: CustomToolStart). Emitting CustomToolStart here
+        # would lock the step into the custom-tool renderer.
+        if self.mcp_server.emit_documents:
+            return
         self.emitter.emit(
             Packet(
                 placement=placement,
@@ -155,11 +164,26 @@ class MCPTool(Tool[None]):
             )
         )
 
+    def _emit_deferred_custom_start(self, placement: Placement) -> None:
+        """Emit CustomToolStart for the non-document (custom-tool) fallback paths.
+
+        Needed because emit_start() is a no-op for citeable servers, so the raw
+        JSON / error paths must open their own custom-tool step.
+        """
+        if self.mcp_server.emit_documents:
+            self.emitter.emit(
+                Packet(
+                    placement=placement,
+                    obj=CustomToolStart(tool_name=self._name),
+                )
+            )
+
     def _build_citable_documents_response(
         self,
         tool_result: Any,
         starting_citation_num: int,
         placement: Placement,
+        queries: list[str] | None = None,
     ) -> ToolResponse | None:
         """Surface a document-shaped MCP result as citable SearchDocs.
 
@@ -231,25 +255,23 @@ class MCPTool(Tool[None]):
 
         llm_facing_response = "\n\n".join(llm_sections)
 
-        # Light delta so the tool-run card isn't empty; chips + source panel
-        # come from the SearchDocsResponse citation flow, not this packet.
+        # Emit search-style packets so the client renders the rich "Searched
+        # documents" view (query chips + document cards) — identical to Onyx's
+        # native search — instead of a raw custom-tool card. The citation chips
+        # + source panel still come from the SearchDocsResponse below; these
+        # packets are only the live tool-run UI.
+        self.emitter.emit(Packet(placement=placement, obj=SearchToolStart()))
+        if queries:
+            self.emitter.emit(
+                Packet(
+                    placement=placement,
+                    obj=SearchToolQueriesDelta(queries=queries),
+                )
+            )
         self.emitter.emit(
             Packet(
                 placement=placement,
-                obj=CustomToolDelta(
-                    tool_name=self._name,
-                    response_type="json",
-                    data={
-                        "documents_count": len(search_docs),
-                        "documents": [
-                            {
-                                "title": doc.semantic_identifier,
-                                "url": doc.link or "",
-                            }
-                            for doc in search_docs
-                        ],
-                    },
-                ),
+                obj=SearchToolDocumentsDelta(documents=search_docs),
             )
         )
 
@@ -337,7 +359,8 @@ class MCPTool(Tool[None]):
                 error_result = {"error": auth_error_msg}
                 llm_facing_response = json.dumps(error_result)
 
-                # Emit CustomToolDelta packet
+                # Emit CustomToolDelta packet (open the deferred custom-tool step first)
+                self._emit_deferred_custom_start(placement)
                 self.emitter.emit(
                     Packet(
                         placement=placement,
@@ -401,10 +424,18 @@ class MCPTool(Tool[None]):
             # documents (chip citations + source panel). Falls back to the
             # plain custom-tool JSON path when the result isn't document-shaped.
             if self.mcp_server.emit_documents and override_kwargs is not None:
+                # Show the tool's string arguments (e.g. `question`) as query
+                # chips in the search UI.
+                query_terms = [
+                    v.strip()
+                    for v in llm_kwargs.values()
+                    if isinstance(v, str) and v.strip()
+                ]
                 citable_response = self._build_citable_documents_response(
                     tool_result=tool_result,
                     starting_citation_num=override_kwargs.starting_citation_num,
                     placement=placement,
+                    queries=query_terms,
                 )
                 if citable_response is not None:
                     return citable_response
@@ -413,7 +444,8 @@ class MCPTool(Tool[None]):
             tool_result_dict = {"tool_result": tool_result}
             llm_facing_response = json.dumps(tool_result_dict)
 
-            # Emit CustomToolDelta packet
+            # Emit CustomToolDelta packet (open the deferred custom-tool step first)
+            self._emit_deferred_custom_start(placement)
             self.emitter.emit(
                 Packet(
                     placement=placement,
@@ -468,7 +500,8 @@ class MCPTool(Tool[None]):
 
             llm_facing_response = json.dumps(error_result)
 
-            # Emit CustomToolDelta packet
+            # Emit CustomToolDelta packet (open the deferred custom-tool step first)
+            self._emit_deferred_custom_start(placement)
             self.emitter.emit(
                 Packet(
                     placement=placement,
