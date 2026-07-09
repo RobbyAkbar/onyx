@@ -738,6 +738,36 @@ def translate_assistant_message_to_packets(
                             )
                         )
 
+                    elif (
+                        tool.mcp_server_id is not None
+                        and tool.mcp_server is not None
+                        and tool.mcp_server.emit_documents
+                        and tool_call.search_docs
+                    ):
+                        # Citeable MCP tool that produced documents: replay as
+                        # the rich "Searched documents" view (mirrors the live
+                        # search packets MCPTool emits), not the flat
+                        # custom-tool blob. Non-doc MCP tools on the same server
+                        # have no search_docs and fall through to custom below.
+                        mcp_search_docs: list[SavedSearchDoc] = [
+                            translate_db_search_doc_to_saved_search_doc(doc)
+                            for doc in tool_call.search_docs
+                        ]
+                        mcp_queries = [
+                            v.strip()
+                            for v in (tool_call.tool_call_arguments or {}).values()
+                            if isinstance(v, str) and v.strip()
+                        ]
+                        turn_tool_packets.extend(
+                            create_search_packets(
+                                search_queries=mcp_queries,
+                                search_docs=mcp_search_docs,
+                                is_internet_search=False,
+                                turn_index=turn_num,
+                                tab_index=tool_call.tab_index,
+                            )
+                        )
+
                     else:
                         # Custom tool or unknown tool
                         # Try to parse as structured CustomToolCallSummary JSON
