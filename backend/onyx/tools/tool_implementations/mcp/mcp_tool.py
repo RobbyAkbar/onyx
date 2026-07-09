@@ -184,6 +184,7 @@ class MCPTool(Tool[None]):
         starting_citation_num: int,
         placement: Placement,
         queries: list[str] | None = None,
+        existing_citation_mapping: dict[str, int] | None = None,
     ) -> ToolResponse | None:
         """Surface a document-shaped MCP result as citable SearchDocs.
 
@@ -211,7 +212,11 @@ class MCPTool(Tool[None]):
         search_docs: list[SearchDoc] = []
         citation_mapping: dict[int, str] = {}
         llm_sections: list[str] = []
-        citation_num = starting_citation_num
+        # document_id -> citation number already assigned earlier in this turn; reused
+        # so a repeated search doesn't mint a new number for the same document (which
+        # the model would then cite as a dangling [N] absent from the final mapping).
+        seen: dict[str, int] = dict(existing_citation_mapping or {})
+        next_citation_num = starting_citation_num
 
         for raw in raw_documents:
             if not isinstance(raw, dict):
@@ -226,6 +231,14 @@ class MCPTool(Tool[None]):
             document_id = f"{MCP_DOC_ID_PREFIX}{doc_id}"
             url = raw.get("url") or None
             content_str = str(content)
+
+            # Reuse this document's existing citation number if it was already cited in
+            # this turn; otherwise assign the next fresh number.
+            citation_num = seen.get(document_id)
+            if citation_num is None:
+                citation_num = next_citation_num
+                next_citation_num += 1
+                seen[document_id] = citation_num
 
             search_docs.append(
                 SearchDoc(
@@ -248,7 +261,6 @@ class MCPTool(Tool[None]):
             # Surface the raw `id` so the model can reference this document in
             # follow-up tool calls (e.g. fetching its summary / full content).
             llm_sections.append(f"[{citation_num}] {title} (id: {doc_id})\n{content_str}")
-            citation_num += 1
 
         if not search_docs:
             return None
@@ -436,6 +448,7 @@ class MCPTool(Tool[None]):
                     starting_citation_num=override_kwargs.starting_citation_num,
                     placement=placement,
                     queries=query_terms,
+                    existing_citation_mapping=override_kwargs.citation_mapping,
                 )
                 if citable_response is not None:
                     return citable_response

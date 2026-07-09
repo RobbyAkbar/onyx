@@ -420,6 +420,11 @@ def run_tool_calls(
         elif isinstance(tool, MCPTool) and tool.mcp_server.emit_documents:
             override_kwargs = MCPToolOverrideKwargs(
                 starting_citation_num=starting_citation_num,
+                # Reverse the running mapping (num -> document_id) so a repeated
+                # search can reuse a document's existing citation number.
+                citation_mapping={
+                    document_id: num for num, document_id in citation_mapping.items()
+                },
             )
             # Reserve a citation-number block so parallel tools don't collide.
             starting_citation_num += 100
