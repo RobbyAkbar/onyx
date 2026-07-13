@@ -1869,22 +1869,26 @@ def _list_mcp_tools_by_id(
     )
     db.commit()
 
+    # Persist discovered tools for every caller (including non-admin users who
+    # discover under their own per-user OAuth token) so that `source=db` reads
+    # return them. Deletion reconciliation stays admin-only: a non-admin may see
+    # a subset under their token and must not delete tools curated server-wide.
+    existing_tools = get_tools_by_mcp_server_id(mcp_server.id, db)
+    existing_by_name = {db_tool.name: db_tool for db_tool in existing_tools}
+    processed_names: set[str] = set()
+
+    db_dirty = _upsert_db_tools(
+        discovered_tools, existing_by_name, processed_names, mcp_server.id, db
+    )
+
     if is_admin:
-        existing_tools = get_tools_by_mcp_server_id(mcp_server.id, db)
-        existing_by_name = {db_tool.name: db_tool for db_tool in existing_tools}
-        processed_names: set[str] = set()
-
-        db_dirty = _upsert_db_tools(
-            discovered_tools, existing_by_name, processed_names, mcp_server.id, db
-        )
-
         for name, db_tool in existing_by_name.items():
             if name not in processed_names:
                 delete_tool__no_commit(db_tool.id, db)
                 db_dirty = True
 
-        if db_dirty:
-            db.commit()
+    if db_dirty:
+        db.commit()
 
     # Truncate tool descriptions to prevent overly long responses
     for tool in discovered_tools:
